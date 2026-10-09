@@ -31,8 +31,10 @@ public type ErrorDetail record {|
 # Base type for every A2A protocol error.
 #
 # Distinct, so `is a2a:Error` matches any subtype and each subtype is
-# distinguishable from its siblings the same way. The nine below are the
-# canonical types of specification section 5.4.
+# distinguishable from its siblings the same way. The first nine below are the
+# canonical types of specification section 5.4; `AuthenticationError` and
+# `AuthorizationError` are this library's names for the two conditions that
+# section describes without naming a type.
 public type Error distinct error<ErrorDetail>;
 
 # The agent does not know the task the request named.
@@ -64,10 +66,31 @@ public type ExtendedAgentCardNotConfiguredError distinct Error;
 # The agent requires an A2A extension the request did not declare.
 public type ExtensionSupportRequiredError distinct Error;
 
+# The agent rejected the request's credentials, or none were sent: HTTP 401
+# (`UNAUTHENTICATED`).
+#
+# Not one of the nine of section 5.4. Section 5.4's error-code mapping table names
+# none for authentication, but the same section requires a server to reject
+# missing or invalid credentials and gives 401 and `UNAUTHENTICATED` as the
+# binding-specific forms. `ErrorDetail.code` is the HTTP status. When the
+# response carried `WWW-Authenticate` challenges they are in `data` as
+# `{"wwwAuthenticate": [...]}`, saying which scheme to authenticate with.
+public type AuthenticationError distinct Error;
+
+# The caller is identified but not permitted to do this: HTTP 403
+# (`PERMISSION_DENIED`), for example a token that lacks a scope the agent
+# requires.
+#
+# Not one of the nine of section 5.4; see `AuthenticationError`.
+# `ErrorDetail.code` is the HTTP status.
+public type AuthorizationError distinct Error;
+
 # This library's catch-all, for failures the A2A error taxonomy does not name.
 #
-# Specification section 5.4 lists nine canonical error types, and the nine
-# above are exactly those. This one covers what is left:
+# Specification section 5.4 lists nine canonical error types, and the first
+# nine above are exactly those; the authentication and authorization errors
+# cover the two conditions it describes without naming. This one covers what
+# is left:
 #
 # - a transport failure carrying no A2A error code
 # - a malformed response that never reached an operation
@@ -87,6 +110,84 @@ public type InternalError distinct Error;
 # + return - A typed InvalidAgentResponseError
 isolated function invalidAgentResponse(string message) returns InvalidAgentResponseError {
     return error InvalidAgentResponseError(message, message = message, code = -32006);
+}
+
+# Builds the error for a request the server cannot accept as sent: a body that
+# is not JSON, does not match the operation's request type, or carries a
+# malformed part.
+#
+# Specification section 5.4 names no A2A error type for this, and this library
+# deliberately adds none (see `InternalError`). It is `InternalError` carrying
+# the standard JSON-RPC "invalid request" code (-32600), the same pairing
+# `toA2AErrorFromRest` decodes for the `INVALID_REQUEST` reason. On the wire it
+# is a 400, not a 500: the caller's request was the problem, not the agent.
+#
+# + message - What specifically was wrong with the request
+# + fieldName - The request field at fault, when one is; recorded as
+#               `data.field` (see `fieldViolationsOf`)
+# + return - An `InternalError` with code -32600
+isolated function invalidRequest(string message, string? fieldName = ()) returns InternalError {
+    if fieldName is string {
+        return error InternalError(message, message = message, code = -32600, data = {"field": fieldName});
+    }
+    return error InternalError(message, message = message, code = -32600);
+}
+
+# Builds the error for a request that names something this server does not
+# serve: a parameter (such as a tenant) whose value is not one it accepts.
+#
+# Like `invalidRequest`, this is `InternalError` carrying a standard JSON-RPC
+# code (-32602, "invalid params"), which `errorBindingFor` serves as a 400 and
+# `toA2AErrorFromRest` decodes for the `INVALID_PARAMS` reason. The
+# specification's validation errors are 400 (section 3.3.2); a 500 would say the
+# agent failed when the caller's input was the problem.
+#
+# + message - What specifically was wrong with the parameter
+# + fieldName - The parameter at fault, when one is; recorded as
+#               `data.field` (see `fieldViolationsOf`)
+# + return - An `InternalError` with code -32602
+isolated function invalidParams(string message, string? fieldName = ()) returns InternalError {
+    if fieldName is string {
+        return error InternalError(message, message = message, code = -32602, data = {"field": fieldName});
+    }
+    return error InternalError(message, message = message, code = -32602);
+}
+
+# The `google.rpc.BadRequest` field violations a validation error carries.
+#
+# `invalidRequest` and `invalidParams` record the field at fault as
+# `data.field`. `data` is what the REST error body serialises as
+# `ErrorInfo.metadata`, so the field name also reaches the client there; this
+# turns it into the structured entry section 11.6 asks for as well.
+#
+# + err - The error
+# + return - One violation naming the field, or `()` when the error is not a
+#            validation error or names no field
+isolated function fieldViolationsOf(Error err) returns json[]? {
+    int? code = err.detail()?.code;
+    json data = err.detail()?.data;
+    if (code != -32600 && code != -32602) || data !is map<json> {
+        return;
+    }
+    json fieldName = data["field"];
+    if fieldName !is string {
+        return;
+    }
+    return [{"field": fieldName, "description": err.message()}];
+}
+
+# Builds the error for a request to a path that is no A2A operation.
+#
+# `InternalError` carrying the JSON-RPC "method not found" code (-32601), which
+# `errorBindingFor` serves as a 404 and `toA2AErrorFromRest` already decodes for
+# the `METHOD_NOT_FOUND` reason. The specification names no error for an unknown
+# route; what it does fix is that a 5xx is for system failures, and a caller's
+# own mistake is not one.
+#
+# + message - Which method and path had no operation
+# + return - An `InternalError` with code -32601
+isolated function methodNotFound(string message) returns InternalError {
+    return error InternalError(message, message = message, code = -32601);
 }
 
 # Wraps a raw, untyped error (a connection failure from `ballerina/http`/
@@ -124,10 +225,12 @@ isolated function wrapTransportError(error e) returns Error {
 # + statusCode - The HTTP status code the response carried
 # + body - The parsed JSON error body, if any (absent for e.g. a stream
 #          drop with no body available)
+# + challenges - The response's `WWW-Authenticate` values, kept on an
+#                `AuthenticationError`
 # + return - The corresponding typed Error, with detail.code synthesized
 #            to the equivalent JSON-RPC code so a caller checking
 #            detail.code sees identical values regardless of binding
-isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
+isolated function toA2AErrorFromRest(int statusCode, json? body, string[] challenges = []) returns Error {
     string? reason = extractRestErrorReason(body);
     string message = extractRestErrorMessage(body) ?: string `REST request failed with HTTP ${statusCode}`;
     json? data = extractRestErrorMetadata(body);
@@ -174,7 +277,27 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
             "INTERNAL_ERROR" => {
                 return error InternalError(message, message = message, code = -32603, data = data);
             }
+            "UNAUTHENTICATED" => {
+                return error AuthenticationError(message, message = message, code = 401,
+                    data = withChallenges(data, challenges));
+            }
+            "PERMISSION_DENIED" => {
+                return error AuthorizationError(message, message = message, code = 403, data = data);
+            }
         }
+    }
+
+    // A gateway, proxy, or framework answering 401 or 403 sends no A2A body at
+    // all, so the bare status is what says the credentials were the problem.
+    if statusCode == 401 {
+        string msg = extractRestErrorMessage(body) ?:
+            "Authentication failed: the agent rejected the credentials, or none were sent (HTTP 401)";
+        return error AuthenticationError(msg, message = msg, code = 401, data = withChallenges(data, challenges));
+    }
+    if statusCode == 403 {
+        string msg = extractRestErrorMessage(body) ?:
+            "Authorization failed: the agent does not permit this caller to do this (HTTP 403)";
+        return error AuthorizationError(msg, message = msg, code = 403, data = data);
     }
 
     // No usable ErrorInfo reason — fall back on status code alone.
@@ -188,6 +311,21 @@ isolated function toA2AErrorFromRest(int statusCode, json? body) returns Error {
         return error InternalError(message, message = message, code = -32603, data = data);
     }
     return error InternalError(message, message = message, code = statusCode, data = data);
+}
+
+# Adds an authentication error's `WWW-Authenticate` challenges to its `data`.
+#
+# + data - The `ErrorInfo` metadata the body carried, if any
+# + challenges - The response's challenges
+# + return - `data`, unchanged when there are no challenges, otherwise an object
+#            with them under `wwwAuthenticate` beside anything `data` held
+isolated function withChallenges(json? data, string[] challenges) returns json? {
+    if challenges.length() == 0 {
+        return data;
+    }
+    map<json> merged = data is map<json> ? data.clone() : {};
+    merged["wwwAuthenticate"] = challenges.clone();
+    return merged;
 }
 
 # Scans a REST error body's error.details array for the first

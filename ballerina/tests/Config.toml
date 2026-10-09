@@ -1,0 +1,5 @@
+# Users for the file-user-store Basic authentication test (listener_auth_test.bal).
+[[ballerina.auth.users]]
+username = "dave"
+password = "dave-password"
+scopes = ["a2a:read"]

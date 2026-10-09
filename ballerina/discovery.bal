@@ -188,15 +188,13 @@ isolated function stripTrailingSlash(string url) returns string {
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
 # + return - The raw JSON AgentCard body exactly as received, or an
-#            `a2a:InternalError` for a connection failure or malformed JSON
+#            `a2a:InternalError` for a connection failure, malformed JSON, or
+#            an OAuth2 token that cannot be obtained
 isolated function fetchAgentCardBody(
         string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns json|Error {
-    http:Client|error discoveryClient = new (stripTrailingSlash(agentBaseUrl), clientConfig);
-    if discoveryClient is error {
-        return wrapTransportError(discoveryClient);
-    }
+        map<string> headers = {},
+        *http:ClientConfiguration clientConfig) returns json|Error {
+    http:Client discoveryClient = check newHttpClient(stripTrailingSlash(agentBaseUrl), clientConfig);
     map<string> reqHeaders = {[A2A_VERSION_HEADER]: A2A_VERSION};
     foreach [string, string] [k, v] in headers.entries() {
         reqHeaders[k] = v;
@@ -206,6 +204,10 @@ isolated function fetchAgentCardBody(
     );
     if resp is error {
         return wrapTransportError(resp);
+    }
+    if resp.statusCode == 401 || resp.statusCode == 403 {
+        // A card behind authentication: say so, rather than a generic failure.
+        return toA2AErrorFromRest(resp.statusCode, (), challengesOf(resp));
     }
     if resp.statusCode != 200 {
         return error InternalError(
@@ -231,12 +233,13 @@ isolated function fetchAgentCardBody(
 # + clientConfig - Optional HTTP configuration for auth, TLS, or proxy
 # + headers - Optional default headers
 # + return - The parsed card, or an `a2a:InternalError` for a connection
-#            failure or malformed JSON
+#            failure, malformed JSON, or an OAuth2 token that cannot be
+#            obtained (a wrong client secret, an unreachable token endpoint)
 public isolated function resolveAgentCard(
         string agentBaseUrl,
-        http:ClientConfiguration clientConfig = {},
-        map<string> headers = {}) returns AgentCard|Error {
-    json body = check fetchAgentCardBody(agentBaseUrl, clientConfig, headers);
+        map<string> headers = {},
+        *http:ClientConfiguration clientConfig) returns AgentCard|Error {
+    json body = check fetchAgentCardBody(agentBaseUrl, headers, clientConfig = clientConfig);
     return parseAgentCardBody(body);
 }
 
@@ -283,13 +286,21 @@ isolated function selectInterface(
 
 # Resolves the URL to construct a client against.
 #
+# Stripped of any trailing slash for the same reason `stripTrailingSlash`'s
+# own doc comment gives for card discovery: `http:Client` joins a base
+# ending in `/` with a path starting in `/` into a double slash
+# (`//message:send`), which the server 404s. Confirmed directly, against a
+# real `@a2a-js/sdk` agent: it advertises exactly this shape for a
+# root-mounted deployment (`http://host:port/`), and every operation
+# against it failed until this was stripped.
+#
 # + card - The agent card to read the endpoint from
 # + preferredBinding - Which transport binding to resolve a URL for
 # + return - The matching supportedInterfaces entry's url, or an
 #            InternalError if the card declares no such entry
 isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) returns string|Error {
     AgentInterface iface = check selectInterface(card, preferredBinding);
-    return iface.url;
+    return stripTrailingSlash(iface.url);
 }
 
 # Rejects a card whose interface for the given binding declares a pre-v1.0

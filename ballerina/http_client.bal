@@ -141,7 +141,7 @@ isolated function decodeSendMessageResult(json result) returns Task|Message|Erro
     }
     [string, json] [name, payload] = arm;
     if name == "task" {
-        Task|error task = payload.cloneWithType(Task);
+        Task|error task = normalizeTaskStateJson(payload).cloneWithType(Task);
         if task is error {
             return invalidAgentResponse(
                     string `sendMessage response did not match the expected shape: ${task.message()}`);
@@ -166,13 +166,67 @@ isolated function decodeTaskResult(json result) returns Task|Error {
     if rewired is error {
         return invalidAgentResponse(string `Task response could not be decoded: ${rewired.message()}`);
     }
-    Task|error decoded = rewired.cloneWithType(Task);
+    Task|error decoded = normalizeTaskStateJson(rewired).cloneWithType(Task);
     if decoded is error {
         return invalidAgentResponse(string `Task response did not match the expected shape: ${decoded.message()}`);
     }
     check validateInboundTask(decoded);
     return decoded;
 }
+
+# ProtoJSON parsers accept an enum's integer ordinal as well as its name,
+# and treat an explicit `null` on an optional field the same as the field
+# being absent (specification 5.5, 5.7). `cloneWithType` accepts neither:
+# `TaskState` clones only from its exact string names, and a `null` on
+# `history`/`metadata` doesn't satisfy their optional, non-nullable field
+# types. Both reference clients (`a2a-sdk`, `@a2a-js/sdk`) already read a
+# conforming server this leniently; this normalizes a raw Task payload
+# (or a Task-shaped `status` sibling, e.g. TaskStatusUpdateEvent) to
+# match before decoding. Spec 5.5 also requires senders to emit names,
+# not numbers, so this only matters against a non-conforming server --
+# no reference server has been seen doing either, but ProtoJSON allows
+# it, so a compliant one may start.
+#
+# + raw - A Task- or TaskStatusUpdateEvent-shaped JSON value, returned
+#         unchanged if it isn't a map
+# + return - The same value with a `status.state` ordinal remapped to its
+#            name, and a `null` `history`/`metadata` removed
+isolated function normalizeTaskStateJson(json raw) returns json {
+    if raw !is map<json> {
+        return raw;
+    }
+    map<json> obj = raw;
+    if obj.hasKey("history") && obj["history"] is () {
+        _ = obj.remove("history");
+    }
+    if obj.hasKey("metadata") && obj["metadata"] is () {
+        _ = obj.remove("metadata");
+    }
+    json status = obj["status"];
+    if status is map<json> {
+        json state = status["state"];
+        if state is int {
+            string? name = taskStateOrdinalName(state);
+            if name is string {
+                status["state"] = name;
+            }
+        }
+    }
+    return obj;
+}
+
+# Declaration order here matches specification 5.2's `TaskState` enum,
+# which is also protobuf field-number order (`TASK_STATE_UNSPECIFIED = 0`
+# first, per proto3 convention) -- the ordinal a non-conforming sender
+# may emit in place of the name.
+final string[] & readonly TASK_STATE_BY_ORDINAL = [
+    TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING,
+    TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED,
+    TASK_STATE_INPUT_REQUIRED, TASK_STATE_REJECTED, TASK_STATE_AUTH_REQUIRED
+];
+
+isolated function taskStateOrdinalName(int ordinal) returns string? =>
+    ordinal >= 0 && ordinal < TASK_STATE_BY_ORDINAL.length() ? TASK_STATE_BY_ORDINAL[ordinal] : ();
 
 # + result - The raw result payload
 # + return - The decoded page of tasks, or an InvalidAgentResponseError if
@@ -181,6 +235,45 @@ isolated function decodeListTasksResponse(json result) returns ListTasksResponse
     json|error rewired = decodeRawBytesFromWire(result);
     if rewired is error {
         return invalidAgentResponse(string `ListTasks response could not be decoded: ${rewired.message()}`);
+    }
+    // A server whose `tasks` field defaults to a nil slice can send
+    // `"tasks": null` for an empty page -- confirmed directly against a
+    // real a2a-go server, whose Go zero value does exactly this.
+    // `cloneWithType` otherwise rejects it outright: `tasks` is a
+    // required, non-nullable `Task[]`, and ProtoJSON (specification 5.5,
+    // ADR-001) treats a missing/null repeated field as empty either way,
+    // so normalizing null to `[]` before decoding is what the wire format
+    // itself already means, not a workaround for one server's quirk.
+    //
+    // The same is true of `nextPageToken`, `pageSize` and `totalSize`:
+    // ProtoJSON omits a field left at its default value (specification
+    // 5.7), so a real a2a-rs server's last page, or `{}` for an empty
+    // page, arrives with all three absent. Both reference clients
+    // (`a2a-sdk` 1.2.0, `@a2a-js/sdk`) already read a missing value here
+    // as the type's zero value; normalizing missing/null the same way
+    // before decoding matches what the wire format means, not a
+    // workaround for one server. This must run after the `tasks`
+    // normalization above and before decoding into the required,
+    // non-optional `ListTasksResponse` fields -- an unparseable body is
+    // caught earlier, by `restCall`'s own check, so this never turns a
+    // malformed response into a silent empty page.
+    if rewired is map<json> && rewired["tasks"] is () {
+        rewired["tasks"] = [];
+    }
+    if rewired is map<json> {
+        if rewired["nextPageToken"] is () {
+            rewired["nextPageToken"] = "";
+        }
+        if rewired["pageSize"] is () {
+            rewired["pageSize"] = 0;
+        }
+        if rewired["totalSize"] is () {
+            rewired["totalSize"] = 0;
+        }
+        json tasks = rewired["tasks"];
+        if tasks is json[] {
+            rewired["tasks"] = tasks.map(normalizeTaskStateJson);
+        }
     }
     ListTasksResponse|error decoded = rewired.cloneWithType(ListTasksResponse);
     if decoded is error {
@@ -353,10 +446,12 @@ public isolated client class HttpClient {
     #            derivation when the card declares no HTTP+JSON
     #            interface, a VersionNotSupportedError if the card
     #            resolves to A2A v0.3, or an InternalError if the
-    #            http:Client cannot be created
+    #            http:Client cannot be created -- including when the initial
+    #            OAuth2 token cannot be obtained (a wrong client secret, an
+    #            unreachable token endpoint)
     public isolated function init(AgentCard|string agent, *ClientConfiguration config) returns Error? {
         AgentCard card = agent is string
-            ? check resolveAgentCard(agent, config.clientConfig, config.headers)
+            ? check resolveAgentCard(agent, config.headers, clientConfig = config.clientConfig)
             : agent;
         string serviceUrl = check primaryUrl(card, HTTP_JSON);
         string? effectiveTenant = config.tenant;
@@ -372,11 +467,7 @@ public isolated client class HttpClient {
         // instead of .clone() to shallow-copy it — otherwise this could
         // mutate the caller's own clientConfig in place.
         http:ClientConfiguration effectiveClientConfig = {...config.clientConfig};
-        http:Client|error newHttpClient = new (serviceUrl, effectiveClientConfig);
-        if newHttpClient is error {
-            return wrapTransportError(newHttpClient);
-        }
-        self.httpClient = newHttpClient;
+        self.httpClient = check newHttpClient(serviceUrl, effectiveClientConfig);
         self.defaultHeaders = config.headers.clone().cloneReadOnly();
         self.credentials = config.credentials;
         self.authCard = card.cloneReadOnly();
@@ -487,18 +578,24 @@ public isolated client class HttpClient {
     # result.
     #
     # DeleteTaskPushNotificationConfig returns google.protobuf.Empty over
-    # the wire, so an absent or unparseable body on a 2xx is an empty
-    # success rather than a malformed response. An operation that expects
-    # real content fails its own cloneWithType instead, which is the right
-    # place for that failure to surface.
+    # the wire, so for that one operation an absent or unparseable body on
+    # a 2xx is an empty success rather than a malformed response. Every
+    # other operation expects real content: a truncated body, an HTML
+    # error page returned with a 200, or a body with no content type at
+    # all must not be silently read as "{}" and decoded into an empty
+    # success (e.g. a page with zero results) -- confirmed against a
+    # hostile server sending exactly that. `a2a-sdk` raises in both cases
+    # (network error, JSON decode error); we now return a typed
+    # InvalidAgentResponseError naming the parse failure instead.
     #
     # + httpMethod - The HTTP verb to send, e.g. "GET" or "POST"
     # + path - The full request path, tenant prefix and path params already
     #          substituted
     # + body - The request body, or () for a bodiless request
     # + return - The unwrapped result json, or a typed Error for a non-2xx
-    #            response (via toA2AErrorFromRest) or a connection failure
-    #            (wrapped as InternalError)
+    #            response (via toA2AErrorFromRest), an unparseable 2xx body
+    #            on an operation that expects content (InvalidAgentResponseError),
+    #            or a connection failure (wrapped as InternalError)
     private isolated function restCall(string httpMethod, string path, json? body) returns json|Error {
         http:Response resp = check self.performRestCallWithNegotiation(httpMethod, path, body);
         if resp.statusCode >= 200 && resp.statusCode < 300 {
@@ -506,11 +603,16 @@ public isolated client class HttpClient {
             if payload is json {
                 return payload;
             }
-            return {};
+            if httpMethod == "DELETE" {
+                return {};
+            }
+            return invalidAgentResponse(
+                string `${httpMethod} ${path} returned a 2xx response whose body could not be `
+                    + string `parsed as JSON: ${payload.message()}`);
         }
         json|error errorBodyResult = resp.getJsonPayload();
         json? errorBody = errorBodyResult is json ? errorBodyResult : ();
-        return toA2AErrorFromRest(resp.statusCode, errorBody);
+        return toA2AErrorFromRest(resp.statusCode, errorBody, challengesOf(resp));
     }
 
     # Validates that a REST response is a real SSE stream and decodes it,
@@ -525,7 +627,7 @@ public isolated client class HttpClient {
     private isolated function finishSseResponse(http:Response resp) returns stream<StreamResponse, Error?>|Error {
         if !resp.getContentType().startsWith("text/event-stream") {
             json|error errBody = resp.getJsonPayload();
-            return toA2AErrorFromRest(resp.statusCode, errBody is json ? errBody : ());
+            return toA2AErrorFromRest(resp.statusCode, errBody is json ? errBody : (), challengesOf(resp));
         }
         return readSseStream(resp);
     }
@@ -888,4 +990,36 @@ public isolated client class HttpClient {
         }
         return fetched;
     }
+}
+
+# The `WWW-Authenticate` challenges a response carried, if any.
+#
+# + resp - The response
+# + return - The challenge values, empty when there were none
+isolated function challengesOf(http:Response resp) returns string[] {
+    string[]|http:HeaderNotFoundError challenges = resp.getHeaders("WWW-Authenticate");
+    return challenges is string[] ? challenges : [];
+}
+
+# Creates the `http:Client` for one agent URL, returning a typed error where
+# `ballerina/http` panics.
+#
+# `new http:Client` has no error return for a failure inside an auth handler,
+# so it panics: `ballerina/oauth2` fetches the first token while the client is
+# being built and panics when the token endpoint refuses the client or cannot
+# be reached. A caller of `a2a:HttpClient` or `a2a:resolveAgentCard` is
+# promised a typed `a2a:Error` for that, so the panic is trapped here, at the
+# one place it can occur. The upstream message is folded into the new one,
+# which is where the token endpoint's response is reported.
+#
+# + url - The agent's base URL
+# + config - The HTTP client configuration, auth included
+# + return - The client, or an `a2a:InternalError` if it could not be created
+isolated function newHttpClient(string url, http:ClientConfiguration config) returns http:Client|Error {
+    http:Client|error created = trap new (url, config);
+    if created is http:Client {
+        return created;
+    }
+    string msg = string `could not create the HTTP client for ${url}: ${created.message()}`;
+    return error InternalError(msg, message = msg);
 }

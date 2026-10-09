@@ -386,13 +386,13 @@ isolated function decodeStreamResponseEnvelope(json envelope) returns StreamResp
     anydata|error decoded;
     match name {
         "task" => {
-            decoded = payload.cloneWithType(Task);
+            decoded = normalizeTaskStateJson(payload).cloneWithType(Task);
         }
         "message" => {
             decoded = payload.cloneWithType(Message);
         }
         "statusUpdate" => {
-            decoded = payload.cloneWithType(TaskStatusUpdateEvent);
+            decoded = normalizeTaskStateJson(payload).cloneWithType(TaskStatusUpdateEvent);
         }
         _ => {
             decoded = payload.cloneWithType(TaskArtifactUpdateEvent);

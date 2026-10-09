@@ -16,7 +16,7 @@
  * This is a trimmed root build.gradle: no native/ Java code and no
  * compiler-plugin submodule exist in this package, so the parts of the
  * real ballerina-platform module template that wire those up are omitted
- * rather than left as dead references. See CONFORMANCE_CHECKLIST.md.
+ * rather than left as dead references.
  */
 
 plugins {

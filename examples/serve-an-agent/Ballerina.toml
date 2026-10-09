@@ -1,6 +1,6 @@
 [package]
 org = "examples"
-name = "call_an_agent"
+name = "serve_an_agent"
 version = "0.1.0"
 distribution = "2201.13.5"
 
