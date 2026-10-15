@@ -403,6 +403,23 @@ The agent card comes from `@a2a:ServiceConfig {agentCard: ...}`, whose values mu
 
 Declaring the service on two listeners, `isolated service on publicListener, internalListener { ... }`, serves the same tasks over both, because the service holds the one handler. A listener serves one agent: a second service on the same listener is an error. The listener adds authentication, the well-known discovery endpoint, and version and capability gating around your service. Errors are serialized exactly as the client half of this module decodes them. Only HTTP+JSON at protocol version 1.0 is served in this release.
 
+### JSON-RPC
+
+`a2a:JsonRpcListener` serves the same agent over the JSON-RPC binding at `/rpc`. Where HTTP+JSON addresses an operation by verb and path, JSON-RPC addresses it by method name, so the service defines `remote` functions named for the methods: `sendMessage`, `sendStreamingMessage`, `subscribeToTask`, `getTask`, `listTasks`, `cancelTask`, the four push-notification functions and `getExtendedAgentCard`, with `getAgentCard` for a card built from configuration. Each takes its request record and may take an `a2a:Context`; the rules for what a service must define are the ones above.
+
+```ballerina
+isolated service on new a2a:JsonRpcListener(9090) {
+    private final a2a:DefaultHandler handler = new (new WeatherExecutor());
+
+    isolated remote function sendMessage(a2a:Context context, a2a:SendMessageRequest request)
+            returns a2a:Task|a2a:Message|a2a:Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+}
+```
+
+A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {...}}` and the `A2A-Version: 1.0` header. A failure is a JSON-RPC `error` object on a 200, carrying the specification's code (`-32001` task not found, `-32004` unsupported operation, and so on); streaming methods answer with Server-Sent Events whose every `data` is a complete JSON-RPC response. To serve one agent over both bindings, build both listeners on one `http:Listener`: the card at `/.well-known/agent-card.json` then lists both interfaces, and both services must declare the same card and define the same capabilities.
+
 ### Bringing your own handler
 
 `a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `resource` function for it and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.

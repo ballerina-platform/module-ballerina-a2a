@@ -293,14 +293,7 @@ isolated service class RestDispatcherService {
     # + req - The HTTP request
     # + return - A VersionNotSupportedError when the version is unsupported
     private isolated function checkVersion(http:Request req) returns Error? {
-        string|http:HeaderNotFoundError header = req.getHeader("A2A-Version");
-        string version = header is string ? header : "0.3";
-        if majorMinor(version) != A2A_PROTOCOL_VERSION {
-            string msg = string `A2A protocol version ${version} is not supported; `
-                + string `this interface serves v1.0`;
-            return error VersionNotSupportedError(msg, message = msg);
-        }
-        return;
+        return checkVersionHeader(req);
     }
 
     # Rejects a request that omits a required extension.
@@ -317,28 +310,7 @@ isolated service class RestDispatcherService {
     # + return - An ExtensionSupportRequiredError naming the first
     #            undeclared required extension, or `()`
     private isolated function checkExtensions(http:Request req) returns Error? {
-        AgentExtension[] extensions = self.card.capabilities.extensions ?: [];
-        boolean anyRequired = extensions.some(ext => ext.required);
-        if !anyRequired {
-            return;
-        }
-
-        string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
-        string[] declared = [];
-        if header is string {
-            foreach string uri in re `,`.split(header) {
-                declared.push(uri.trim());
-            }
-        }
-
-        foreach AgentExtension ext in extensions {
-            string? uri = ext.uri;
-            if ext.required && uri is string && declared.indexOf(uri) is () {
-                string msg = string `extension ${uri} is required but was not declared `
-                    + "in the A2A-Extensions header";
-                return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
-            }
-        }
+        return checkRequiredExtensions(self.card, req);
     }
 
     # Runs one operation for an admitted request.
@@ -695,10 +667,11 @@ isolated function logAuthFailure(AuthFailure failure, string method, string path
 # Reads the tenant a card declares on its HTTP+JSON interface, or `()`.
 #
 # + card - The agent card
+# + protocolBinding - The binding whose interface is read
 # + return - The declared tenant, or `()` if the interface declares none
-isolated function declaredTenant(AgentCard card) returns string? {
+isolated function declaredTenant(AgentCard card, string protocolBinding = HTTP_JSON) returns string? {
     foreach AgentInterface iface in card.supportedInterfaces {
-        if iface.protocolBinding == HTTP_JSON {
+        if iface.protocolBinding == protocolBinding {
             return iface?.tenant;
         }
     }
@@ -899,4 +872,51 @@ isolated function callerContextOf(http:Request req, AuthenticatedCaller? caller,
         context.tenant = tenant;
     }
     return context;
+}
+
+# Rejects a request whose A2A-Version header names anything but 1.0, by
+# Major.Minor; an absent header means 0.3. Shared by every binding, since the
+# header is an HTTP-level requirement of the protocol, not of one binding.
+#
+# + req - The HTTP request
+# + return - A VersionNotSupportedError when the version is unsupported
+isolated function checkVersionHeader(http:Request req) returns Error? {
+    string|http:HeaderNotFoundError header = req.getHeader("A2A-Version");
+    string version = header is string ? header : "0.3";
+    if majorMinor(version) != A2A_PROTOCOL_VERSION {
+        string msg = string `A2A protocol version ${version} is not supported; `
+            + string `this interface serves v1.0`;
+        return error VersionNotSupportedError(msg, message = msg);
+    }
+    return;
+}
+
+# Rejects a request that omits an extension the card declares required.
+#
+# + card - The served card
+# + req - The HTTP request
+# + return - An ExtensionSupportRequiredError naming the first undeclared required extension, or `()`
+isolated function checkRequiredExtensions(AgentCard card, http:Request req) returns Error? {
+    AgentExtension[] extensions = card.capabilities.extensions ?: [];
+    boolean anyRequired = extensions.some(ext => ext.required);
+    if !anyRequired {
+        return;
+    }
+
+    string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
+    string[] declared = [];
+    if header is string {
+        foreach string uri in re `,`.split(header) {
+            declared.push(uri.trim());
+        }
+    }
+
+    foreach AgentExtension ext in extensions {
+        string? uri = ext.uri;
+        if ext.required && uri is string && declared.indexOf(uri) is () {
+            string msg = string `extension ${uri} is required but was not declared `
+                + "in the A2A-Extensions header";
+            return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
+        }
+    }
 }

@@ -52,7 +52,7 @@ isolated function serviceConfigurationOf(Service a2aService) returns ServiceConf
 # + return - The capabilities, or an `a2a:InternalError` naming what is missing
 isolated function capabilitiesOf(OperationBinding binding) returns Capabilities|Error {
     if !binding.isDefined("handleSendMessage") {
-        string msg = "an a2a:Service must define the `post message\\:send` resource";
+        string msg = string `an a2a:Service must define ${binding.declarationOf("handleSendMessage")}`;
         return error InternalError(msg, message = msg);
     }
     boolean streaming = check wholeGroup(binding, "streaming", ["handleSendStreamingMessage", "handleSubscribeToTask"]);
@@ -77,22 +77,22 @@ isolated function wholeGroup(OperationBinding binding, string capability, string
     if missing.length() == names.length() {
         return false;
     }
-    string msg = string `an a2a:Service that supports ${capability} must define all of ${resourcesOf(names)}; `
-        + string `missing ${resourcesOf(missing)}`;
+    string msg = string `an a2a:Service that supports ${capability} must define all of ${resourcesOf(binding, names)}; `
+        + string `missing ${resourcesOf(binding, missing)}`;
     return error InternalError(msg, message = msg);
 }
 
-# Names the resources that serve a set of operations, for an error message.
+# Names how a set of operations is declared, for an error message.
 #
+# + binding - The attached service
 # + operations - Operation names such as `handleGetTask`
-# + return - The resources, e.g. `get tasks/*`, comma separated
-isolated function resourcesOf(string[] operations) returns string {
-    string[] resources = [];
+# + return - The declarations, e.g. `get tasks/*`, comma separated
+isolated function resourcesOf(OperationBinding binding, string[] operations) returns string {
+    string[] declarations = [];
     foreach string operation in operations {
-        ResourceRoute route = OPERATION_ROUTES.get(operation);
-        resources.push(string `${route.accessor} ${route.path}`);
+        declarations.push(binding.declarationOf(operation));
     }
-    return ", ".'join(...resources);
+    return ", ".'join(...declarations);
 }
 
 # The agent card a service declares: the `@a2a:ServiceConfig` annotation, or
@@ -124,26 +124,30 @@ isolated function agentCardOf(Service a2aService, OperationBinding binding) retu
 isolated class ServedCards {
     private final (http:ListenerAuthConfig[] & readonly)? auth;
     private final Capabilities & readonly capabilities;
+    private final string protocolBinding;
 
     # + auth - The listener's `auth`, from which security schemes are derived
     # + capabilities - What the service's operations imply
-    isolated function init((http:ListenerAuthConfig[] & readonly)? auth, Capabilities capabilities) {
+    # + protocolBinding - The binding the serving listener speaks
+    isolated function init((http:ListenerAuthConfig[] & readonly)? auth, Capabilities capabilities,
+            string protocolBinding = HTTP_JSON) {
         self.auth = auth;
         self.capabilities = capabilities.cloneReadOnly();
+        self.protocolBinding = protocolBinding;
     }
 
     # + supplied - The card the service declared
     # + return - The card to serve at the discovery path
     isolated function publicCard(AgentCard supplied) returns AgentCard {
         return deriveServedCard(withDerivedSecurity(supplied, self.auth), self.capabilities.extendedAgentCard,
-                self.capabilities.streaming, self.capabilities.pushNotifications);
+                self.capabilities.streaming, self.capabilities.pushNotifications, self.protocolBinding);
     }
 
     # + supplied - The extended card the service returned
     # + return - The extended card to serve, which declares the extended card itself
     isolated function extendedCard(AgentCard supplied) returns AgentCard {
         return deriveServedCard(withDerivedSecurity(supplied, self.auth), true,
-                self.capabilities.streaming, self.capabilities.pushNotifications);
+                self.capabilities.streaming, self.capabilities.pushNotifications, self.protocolBinding);
     }
 }
 
@@ -166,14 +170,16 @@ isolated class ServedCards {
 # + extendedCardConfigured - Whether the service defines the `get extendedAgentCard` resource
 # + streamingCapability - Whether the service defines the streaming operations
 # + pushNotificationsCapability - Whether the service defines the push-notification operations
+# + protocolBinding - The binding of the one interface the card starts with
 # + return - The card to serve
 isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfigured,
-        boolean streamingCapability, boolean pushNotificationsCapability) returns AgentCard {
+        boolean streamingCapability, boolean pushNotificationsCapability,
+        string protocolBinding = HTTP_JSON) returns AgentCard {
     // A mutable top level even when `supplied` is readonly:
     // `clone()` alone returns an immutable value unchanged.
     AgentCard card = {...supplied.clone()};
     card.supportedInterfaces = [
-        {url: "", protocolBinding: HTTP_JSON, protocolVersion: A2A_PROTOCOL_VERSION}
+        {url: "", protocolBinding, protocolVersion: A2A_PROTOCOL_VERSION}
     ];
     card.capabilities = {
         streaming: streamingCapability,
