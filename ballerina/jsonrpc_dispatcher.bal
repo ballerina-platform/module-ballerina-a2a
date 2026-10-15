@@ -77,7 +77,7 @@ isolated service class JsonRpcDispatcherService {
         }
         json id = requestIdOf(payload);
         string method = <string>payload["method"];
-        json params = payload["params"] ?: {};
+        json params = camelCaseKeys(payload["params"] ?: {});
 
         Error? gate = checkVersionHeader(req);
         if gate is () {
@@ -147,15 +147,15 @@ isolated service class JsonRpcDispatcherService {
             }
             "GetTask" => {
                 GetTaskRequest request = <GetTaskRequest>check decodeParams(params, GetTaskRequest);
-                return (check self.binding.getTask(context, request)).toJson();
+                return resultJson(check self.binding.getTask(context, request));
             }
             "ListTasks" => {
                 ListTasksRequest request = <ListTasksRequest>check decodeParams(params, ListTasksRequest);
-                return (check self.binding.listTasks(context, request)).toJson();
+                return resultJson(check self.binding.listTasks(context, request));
             }
             "CancelTask" => {
                 CancelTaskRequest request = <CancelTaskRequest>check decodeParams(params, CancelTaskRequest);
-                return (check self.binding.cancelTask(context, request)).toJson();
+                return resultJson(check self.binding.cancelTask(context, request));
             }
             "GetExtendedAgentCard" => {
                 GetExtendedAgentCardRequest request =
@@ -243,6 +243,49 @@ isolated function requestIdOf(json payload) returns json {
         }
     }
     return ();
+}
+
+# Accepts the protobuf JSON field names (`task_id`, `history_length`) next to
+# the lowerCamelCase ones, as the proto3 JSON mapping the specification uses
+# does: some clients send the original names. Only the top level of `params`
+# is renamed, so nothing inside a `metadata` map or a data part is touched.
+#
+# + params - The request's `params`
+# + return - `params` with its top-level keys in lowerCamelCase
+isolated function camelCaseKeys(json params) returns json {
+    if params !is map<json> {
+        return params;
+    }
+    map<json> renamed = {};
+    foreach [string, json] [key, value] in params.entries() {
+        renamed[camelCaseOf(key)] = value;
+    }
+    return renamed;
+}
+
+isolated function camelCaseOf(string name) returns string {
+    string[] words = re `_`.split(name);
+    if words.length() == 1 {
+        return name;
+    }
+    string camel = words[0];
+    foreach string word in words.slice(1) {
+        camel += word.length() == 0 ? "" : word.substring(0, 1).toUpperAscii() + word.substring(1);
+    }
+    return camel;
+}
+
+# Wire-encodes a result that may carry raw bytes (a message part in a task's
+# history or an artifact), as base64, the way the other bindings send it.
+#
+# + value - The result record
+# + return - The JSON to send, or a transport error if encoding failed
+isolated function resultJson(anydata value) returns json|Error {
+    json|error wired = encodeRawBytesForWire(value.toJson());
+    if wired is error {
+        return wrapTransportError(wired);
+    }
+    return wired;
 }
 
 # Decodes a request's `params` into its record, reporting a mismatch as the
