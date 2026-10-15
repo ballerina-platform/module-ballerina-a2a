@@ -150,7 +150,8 @@ isolated service class JsonRpcDispatcherService {
                 return resultJson(check self.binding.getTask(context, request));
             }
             "ListTasks" => {
-                ListTasksRequest request = <ListTasksRequest>check decodeParams(params, ListTasksRequest);
+                ListTasksRequest request = <ListTasksRequest>check decodeParams(withoutUnsetStatus(params),
+                        ListTasksRequest);
                 return resultJson(check self.binding.listTasks(context, request));
             }
             "CancelTask" => {
@@ -261,6 +262,25 @@ isolated function camelCaseKeys(json params) returns json {
         renamed[camelCaseOf(key)] = value;
     }
     return renamed;
+}
+
+# A `status` filter naming no state is no filter. The @a2a-js/sdk sends
+# `"status": "UNRECOGNIZED"` (the placeholder its generated enum uses for a
+# value it was not given) with every ListTasks call, and the protobuf default
+# is TASK_STATE_UNSPECIFIED; neither selects tasks.
+#
+# + params - The request's `params`
+# + return - `params` without such a `status`
+isolated function withoutUnsetStatus(json params) returns json {
+    if params is map<json> {
+        json status = params["status"];
+        if status == "UNRECOGNIZED" || status == "TASK_STATE_UNSPECIFIED" || status == 0 {
+            map<json> kept = {...params};
+            _ = kept.remove("status");
+            return kept;
+        }
+    }
+    return params;
 }
 
 isolated function camelCaseOf(string name) returns string {

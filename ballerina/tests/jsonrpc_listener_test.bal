@@ -254,3 +254,12 @@ function testAJsonRpcListenerServesOnlyItsOwnPath() returns error? {
     test:assertTrue(rejected is InternalError, "a JsonRpcListener serves /rpc only");
     test:assertTrue((<error>rejected).message().includes("/rpc"), (<error>rejected).message());
 }
+
+// The @a2a-js/sdk sends `"status": "UNRECOGNIZED"` for an unset filter.
+@test:Config {}
+function testAnUnsetStatusFilterIsNoFilter() returns error? {
+    json reply = check rpcCall(JSON_RPC_TEST_PORT, "ListTasks", {status: "UNRECOGNIZED", pageSize: 2});
+    test:assertFalse((<map<json>>reply).hasKey("error"), reply.toJsonString());
+    json[] tasks = <json[]>check reply.result.tasks;
+    test:assertTrue(tasks.length() <= 2);
+}
