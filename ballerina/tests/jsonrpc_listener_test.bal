@@ -148,6 +148,14 @@ function testSendMessageOverJsonRpcCompletesATask() returns error? {
 }
 
 @test:Config {}
+function testAnEmptyTenantMeansNoTenantOverJsonRpc() returns error? {
+    map<json> params = <map<json>>rpcSendParams("rpc-empty-tenant-1");
+    params["tenant"] = "";
+    json reply = check rpcCall(JSON_RPC_TEST_PORT, "SendMessage", params);
+    test:assertEquals(check reply.result.task.status.state, "TASK_STATE_COMPLETED");
+}
+
+@test:Config {}
 function testGetTaskAndListTasksOverJsonRpc() returns error? {
     json sent = check rpcCall(JSON_RPC_TEST_PORT, "SendMessage", rpcSendParams("rpc-get-1"));
     string taskId = check (check sent.result.task.id).ensureType();

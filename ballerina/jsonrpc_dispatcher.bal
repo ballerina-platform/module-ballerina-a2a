@@ -87,7 +87,9 @@ isolated service class JsonRpcDispatcherService {
             return rpcFailure(id, gate);
         }
 
-        string? tenant = params is map<json> && params["tenant"] is string ? <string>params["tenant"] : ();
+        // An empty tenant is the protobuf default a client serialises when it names none.
+        string? tenant = params is map<json> && params["tenant"] is string && params["tenant"] != ""
+            ? <string>params["tenant"] : ();
         string? declared = declaredTenant(self.card, JSONRPC);
         if tenant is string && (declared is () || declared != tenant) {
             return rpcFailure(id, invalidParams(
