@@ -68,6 +68,7 @@ public isolated class JsonRpcListener {
     private final StreamTiming & readonly streamTiming;
     private final string interfaceScheme;
     private final string? publicUrl;
+    private final boolean validateInputModes;
     private JsonRpcDispatcherService? dispatcher = ();
 
     # Creates a JsonRpcListener.
@@ -107,6 +108,7 @@ public isolated class JsonRpcListener {
         }
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
+        self.validateInputModes = config.validateInputModes;
     }
 
     # Attaches an agent's `a2a:Service`.
@@ -133,7 +135,7 @@ public isolated class JsonRpcListener {
         ServedCards cards = new (self.authConfig, capabilities, JSONRPC);
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
-                self.interfaceScheme, self.publicUrl, self.streamTiming);
+                self.interfaceScheme, self.publicUrl, self.streamTiming, self.validateInputModes);
         [CardRegistry, CardService, boolean] [registry, cardService, cardServiceIsNew] =
             cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
         check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH);

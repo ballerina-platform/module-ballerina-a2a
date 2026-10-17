@@ -40,10 +40,11 @@ isolated service class JsonRpcDispatcherService {
     private final string interfaceScheme;
     private final string? publicUrl;
     private final StreamTiming & readonly streamTiming;
+    private final boolean validateInputModes;
 
     isolated function init(AgentCard card, OperationBinding binding, ServedCards cards,
             ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl,
-            StreamTiming streamTiming) {
+            StreamTiming streamTiming, boolean validateInputModes) {
         self.card = card.cloneReadOnly();
         self.binding = binding;
         self.cards = cards;
@@ -51,6 +52,7 @@ isolated service class JsonRpcDispatcherService {
         self.interfaceScheme = interfaceScheme;
         self.publicUrl = publicUrl;
         self.streamTiming = streamTiming.cloneReadOnly();
+        self.validateInputModes = validateInputModes;
     }
 
     isolated resource function post .(http:Request req) returns http:Response|stream<http:SseEvent, error?> {
@@ -111,6 +113,17 @@ isolated service class JsonRpcDispatcherService {
         return response;
     }
 
+    # Rejects a message whose part media types the card does not declare, unless
+    # `validateInputModes` is off.
+    #
+    # + request - The decoded request
+    # + return - A ContentTypeNotSupportedError, or `()`
+    private isolated function checkInputModes(SendMessageRequest request) returns Error? {
+        if self.validateInputModes {
+            return checkInputModes(self.card, request.message);
+        }
+    }
+
     # Runs the operation a method names.
     #
     # + method - The JSON-RPC method, e.g. `SendMessage`
@@ -123,6 +136,7 @@ isolated service class JsonRpcDispatcherService {
         match method {
             "SendMessage" => {
                 SendMessageRequest request = check decodeSendMessageRequest(params);
+                check self.checkInputModes(request);
                 check self.checkInlinePushConfig(request, "sendMessage");
                 Task|Message sent = check self.binding.sendMessage(context, request);
                 string arm = sent is Task ? "task" : "message";
@@ -137,6 +151,7 @@ isolated service class JsonRpcDispatcherService {
                     return serverStreamingUnsupportedError("sendStreamingMessage");
                 }
                 SendMessageRequest request = check decodeSendMessageRequest(params);
+                check self.checkInputModes(request);
                 check self.checkInlinePushConfig(request, "sendStreamingMessage");
                 return self.binding.sendStreamingMessage(context, request);
             }
