@@ -12,7 +12,7 @@ It includes capabilities for:
 4. **Authenticating** – Satisfy the security schemes an agent declares, per skill where they differ.
 5. **Serving an agent** – Write the agent's logic as one `execute` method and publish it as an A2A agent, with the task lifecycle, streaming, and discovery handled for you.
 
-The specification defines three transport bindings. This module implements **HTTP+JSON**, for both the client and the server; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call.
+The specification defines three transport bindings. The client implements **HTTP+JSON**; a card declaring only JSON-RPC or gRPC is rejected when the client is constructed, rather than at the first call. The server implements **HTTP+JSON** (`a2a:RestListener`) and **JSON-RPC** (`a2a:JsonRpcListener`).
 
 ## 1. Connecting to an agent
 
@@ -28,7 +28,7 @@ Construction is where a mismatch surfaces: an unreachable agent, a card that doe
 
 A `RestClient` is cheap to construct and needs no teardown — there is deliberately no `close`. Prefer one long-lived client per agent over one per request.
 
-This release implements HTTP+JSON only. When JSON-RPC and gRPC bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `RestClient`; client code written against the operations will carry over unchanged.
+The client speaks HTTP+JSON only in this release. When JSON-RPC and gRPC client bindings land, a transport-agnostic `Client` that reads the card and picks a binding will join `RestClient`; client code written against the operations will carry over unchanged.
 
 ### 1.1 Connecting from an already-resolved card
 
@@ -393,7 +393,7 @@ An agent is a service attached to a listener, and it takes four pieces, each wit
 - **`a2a:RestListener`** is how requests reach the agent: the port, TLS, authentication, the address the card advertises, stream keep-alives. It holds no agent.
 - **The service** carries the agent card and defines the A2A operations the agent supports, each a `resource` function on the route of the HTTP+JSON binding that either runs your own code or hands its request to the handler.
 
-The listener names the binding, so the service is declared without a path: `service on new a2a:RestListener(9090)` serves HTTP+JSON under `/rest`. The card is always served at `/.well-known/agent-card.json`, with an interface URL that ends in `/rest`, so a client given only the agent's root URL, such as this module's `RestClient`, finds the right address from the card. Further transports will arrive as their own listeners (`a2a:JsonRpcListener`, `a2a:GrpcListener`), and one agent behind several of them is published as one card listing every interface.
+The listener names the binding, so the service is declared without a path: `service on new a2a:RestListener(9090)` serves HTTP+JSON under `/rest`. The card is always served at `/.well-known/agent-card.json`, with an interface URL that ends in `/rest`, so a client given only the agent's root URL, such as this module's `RestClient`, finds the right address from the card. Each transport is its own listener (`a2a:RestListener`, `a2a:JsonRpcListener`; gRPC will be `a2a:GrpcListener`), and one agent behind several of them is published as one card listing every interface (see [JSON-RPC](#json-rpc)).
 
 The operations are the resources `post message\:send`, `post message\:stream`, `get tasks/[string id]/subscribe`, `get tasks/[string id]`, `get tasks`, `post tasks/[string id]/cancel`, `post tasks/[string id]/pushNotificationConfigs`, `get tasks/[string id]/pushNotificationConfigs/[string configId]`, `get tasks/[string id]/pushNotificationConfigs`, `delete tasks/[string id]/pushNotificationConfigs/[string configId]` and `get extendedAgentCard`. On the wire the cancel and subscribe routes are `tasks/{id}:cancel` and `tasks/{id}:subscribe`, as the specification names them; the listener translates, because a Ballerina path parameter cannot carry a suffix. Each resource takes its path parameters, then the operation's request record, and may take an `a2a:Context` among them: `get tasks/[string id](a2a:Context context, a2a:GetTaskRequest request)` or just `get tasks/[string id](a2a:GetTaskRequest request)`. The context says who is calling (the identity authentication established and its authority, the tenant, the headers); leave it out when the operation doesn't need it. A service must define `post message\:send`. An operation it does not define answers `UnsupportedOperationError` (`PushNotificationNotSupportedError` for the push operations). Streaming is one capability and push notifications another, so each group is all or nothing: `message\:stream` with `subscribe`, and the four push operations together.
 
@@ -401,7 +401,7 @@ The agent card comes from `@a2a:ServiceConfig {agentCard: ...}`, whose values mu
 
 `service on new a2a:RestListener(9090)` creates the listener, and the Ballerina runtime attaches the service and starts it, so no `main` is needed. To give the listener options (`auth`, TLS, `publicUrl`) or share it between services, declare it at module level, `listener a2a:RestListener agent = new (9090, auth = [...]);`, and write `service on agent`. A listener declared inside `main` does not keep the program alive. A `service class` also works: attach it with `check agent.attach(new WeatherService())` and start the listener with `check agent.'start()` from `main`.
 
-Declaring the service on two listeners, `isolated service on publicListener, internalListener { ... }`, serves the same tasks over both, because the service holds the one handler. A listener serves one agent: a second service on the same listener is an error. The listener adds authentication, the well-known discovery endpoint, and version and capability gating around your service. Errors are serialized exactly as the client half of this module decodes them. Only HTTP+JSON at protocol version 1.0 is served in this release.
+Declaring the service on two listeners, `isolated service on publicListener, internalListener { ... }`, serves the same tasks over both, because the service holds the one handler. A listener serves one agent: a second service on the same listener is an error. The listener adds authentication, the well-known discovery endpoint, and version and capability gating around your service. Errors are serialized exactly as the client half of this module decodes them. HTTP+JSON and JSON-RPC at protocol version 1.0 are served in this release.
 
 ### JSON-RPC
 
@@ -422,7 +422,7 @@ A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMess
 
 ### Bringing your own handler
 
-`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `resource` function for it and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
+`a2a:DefaultHandler` is a convenience, not a requirement. A service can answer an operation from any code it likes: define the `resource` function (HTTP+JSON) or `remote` function (JSON-RPC) for it and return the operation's result. Operations the service does not define answer `UnsupportedOperationError`, and the served card advertises only the capabilities its operations imply. To change one operation and keep the rest, hold a `DefaultHandler` in the service and delegate the others to it.
 
 ### 7.1 Driving a task
 
