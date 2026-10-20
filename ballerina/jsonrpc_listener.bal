@@ -129,9 +129,11 @@ public isolated class JsonRpcListener {
         OperationBinding binding = new (a2aService, byMethodName = true);
         Capabilities capabilities = check capabilitiesOf(binding);
         AgentCard supplied = check agentCardOf(a2aService, binding);
+        // Specification section 13.3: `GetExtendedAgentCard` MUST require
+        // authentication, so a service that would serve it to anyone must not start.
         if capabilities.extendedAgentCard && self.authenticator is () {
             string msg = "a service that defines getExtendedAgentCard requires JsonRpcListenerConfiguration.auth: "
-                + "the extended agent card is for authenticated callers (specification section 13.3)";
+                + "the extended agent card is for authenticated callers";
             return error InternalError(msg, message = msg);
         }
         ServedCards cards = new (self.authConfig, capabilities, JSONRPC);

@@ -303,3 +303,41 @@ function testJsonRpcListenerRefusesANegativeKeepAliveInterval() {
     test:assertEquals(created.message(),
             "JsonRpcListenerConfiguration.keepAliveInterval must not be negative; use 0 to turn it off");
 }
+
+// A minimal service that defines getExtendedAgentCard.
+isolated service class RpcExtendedCardService {
+    *Service;
+
+    private final DefaultHandler handler;
+
+    isolated function init(DefaultHandler handler) {
+        self.handler = handler;
+    }
+
+    isolated remote function getAgentCard() returns AgentCard|Error {
+        return rpcTestCard;
+    }
+
+    isolated remote function sendMessage(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+
+    isolated remote function getExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
+            returns AgentCard|Error {
+        return self.handler.handleGetExtendedAgentCard(context, request);
+    }
+}
+
+// The extended card is for authenticated callers, so a listener without `auth`
+// refuses a service that defines getExtendedAgentCard, before anything is bound.
+@test:Config {}
+function testJsonRpcExtendedCardWithoutAuthIsRejectedAtStartup() returns error? {
+    DefaultHandler handler = new (new CountingAgent(), extendedAgentCard = rpcTestCard);
+    JsonRpcListener created = check new (19316);
+    error? attached = created.attach(new RpcExtendedCardService(handler));
+    if attached is () {
+        test:assertFail("a listener that would hand the extended card to anyone must not start");
+    }
+    test:assertEquals(attached.message(), "a service that defines getExtendedAgentCard requires "
+        + "JsonRpcListenerConfiguration.auth: the extended agent card is for authenticated callers");
+}
