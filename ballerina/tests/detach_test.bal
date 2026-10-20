@@ -72,3 +72,46 @@ function testARetriedAttachMountsTheCardAfterTheCardServiceFailed() returns erro
     test:assertEquals(card.statusCode, 200, "the retried attach must mount the card");
     check shared.gracefulStop();
 }
+
+const int DETACH_RPC_TEST_PORT = 19311;
+const int DETACH_SHARED_TEST_PORT = 19312;
+
+@test:Config {}
+function testDetachTakesTheJsonRpcInterfaceOffTheCard() returns error? {
+    JsonRpcListener agentListener = check new (DETACH_RPC_TEST_PORT);
+    SendOnlyRpcService first = new;
+    check agentListener.attach(first);
+    check agentListener.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_RPC_TEST_PORT}`, cache = {enabled: false});
+
+    check agentListener.detach(first);
+    http:Response after = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(after.statusCode, 404, "a detached agent's card must no longer be served");
+
+    check agentListener.attach(new SendOnlyRpcService());
+    http:Response again = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(again.statusCode, 200, "the path is free for a replacement");
+    check agentListener.gracefulStop();
+}
+
+// Two listeners on one http:Listener share the card: detaching one leaves the
+// other's interface.
+@test:Config {}
+function testDetachingOneTransportKeepsTheOther() returns error? {
+    http:Listener shared = check new (DETACH_SHARED_TEST_PORT);
+    RestListener restListener = check new (shared);
+    JsonRpcListener rpcListener = check new (shared);
+    DefaultHandler handler = new (new CountingAgent());
+    check restListener.attach(new FullService(handler, authTestCard));
+    RpcService rpcService = new (handler, authTestCard);
+    check rpcListener.attach(rpcService);
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_SHARED_TEST_PORT}`, cache = {enabled: false});
+
+    check rpcListener.detach(rpcService);
+    json card = check cardClient->get("/.well-known/agent-card.json");
+    json[] interfaces = check (check card.supportedInterfaces).ensureType();
+    test:assertEquals(interfaces.length(), 1, "only the HTTP+JSON interface is left");
+    test:assertEquals(check interfaces[0].protocolBinding, "HTTP+JSON");
+    check shared.gracefulStop();
+}
