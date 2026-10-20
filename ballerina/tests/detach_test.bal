@@ -115,3 +115,25 @@ function testDetachingOneTransportKeepsTheOther() returns error? {
     test:assertEquals(check interfaces[0].protocolBinding, "HTTP+JSON");
     check shared.gracefulStop();
 }
+
+const int RETRY_RPC_ATTACH_TEST_PORT = 19314;
+
+@test:Config {}
+function testARetriedJsonRpcAttachMountsTheCardAfterTheCardServiceFailed() returns error? {
+    http:Listener shared = check new (RETRY_RPC_ATTACH_TEST_PORT);
+    RootBlocker blocker = new;
+    check shared.attach(blocker);
+    JsonRpcListener agentListener = check new (shared);
+    SendOnlyRpcService agent = new;
+
+    error? first = agentListener.attach(agent);
+    test:assertTrue(first is error, "the card service cannot mount while / is taken");
+
+    check shared.detach(blocker);
+    check agentListener.attach(agent);
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${RETRY_RPC_ATTACH_TEST_PORT}`, cache = {enabled: false});
+    http:Response card = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(card.statusCode, 200, "the retried attach must mount the card");
+    check shared.gracefulStop();
+}

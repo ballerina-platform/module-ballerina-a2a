@@ -146,6 +146,8 @@ public isolated class JsonRpcListener {
             error? cardResult = self.httpListener.attach(cardService);
             if cardResult is error {
                 self.forget(registry);
+                // Not mounted, so the next attach must create and mount one.
+                dropCardState(self.httpListener);
                 return wrapTransportError(cardResult);
             }
         }
