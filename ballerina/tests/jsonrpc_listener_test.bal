@@ -281,3 +281,25 @@ function testAnUnsetStatusFilterIsNoFilter() returns error? {
     json[] tasks = <json[]>check reply.result.tasks;
     test:assertTrue(tasks.length() <= 2);
 }
+
+// The same stream-timing check as `RestListener`, under this listener's own
+// configuration name.
+@test:Config {}
+function testJsonRpcListenerRefusesANegativeStreamIdleTimeout() {
+    JsonRpcListener|Error created = new (19316, streamIdleTimeout = -1);
+    if created is JsonRpcListener {
+        test:assertFail("a negative streamIdleTimeout must be refused");
+    }
+    test:assertEquals(created.message(),
+            "JsonRpcListenerConfiguration.streamIdleTimeout must not be negative; use 0 to turn it off");
+}
+
+@test:Config {}
+function testJsonRpcListenerRefusesANegativeKeepAliveInterval() {
+    JsonRpcListener|Error created = new (19316, keepAliveInterval = -0.5);
+    if created is JsonRpcListener {
+        test:assertFail("a negative keepAliveInterval must be refused");
+    }
+    test:assertEquals(created.message(),
+            "JsonRpcListenerConfiguration.keepAliveInterval must not be negative; use 0 to turn it off");
+}

@@ -75,9 +75,11 @@ public isolated class JsonRpcListener {
     #
     # + listenTo - A port, or an existing `http:Listener` to mount on
     # + config - How requests reach the agent; see `a2a:RestListener`
-    # + return - An `a2a:Error` if `publicUrl` is unusable, the HTTP listener
-    #            cannot be created, or an `auth` entry cannot be initialised
+    # + return - An `a2a:Error` if a stream timing is negative, `publicUrl` is
+    #            unusable, the HTTP listener cannot be created, or an `auth`
+    #            entry cannot be initialised
     public isolated function init(int|http:Listener listenTo, *JsonRpcListenerConfiguration config) returns Error? {
+        check checkStreamTiming("JsonRpcListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
         string? publicUrl = config.publicUrl;
         if publicUrl is string {
             self.publicUrl = check normalisePublicUrl(publicUrl);
