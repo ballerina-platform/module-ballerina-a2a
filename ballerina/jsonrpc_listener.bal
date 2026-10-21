@@ -140,20 +140,13 @@ public isolated class JsonRpcListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, self.validateInputModes);
-        [CardRegistry, CardService, boolean] [registry, cardService, cardServiceIsNew] =
-            cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        if registry is error {
+            return wrapTransportError(registry);
+        }
         check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH);
         lock {
             self.dispatcher = dispatcherService;
-        }
-        if cardServiceIsNew {
-            error? cardResult = self.httpListener.attach(cardService);
-            if cardResult is error {
-                self.forget(registry);
-                // Not mounted, so the next attach must create and mount one.
-                dropCardState(self.httpListener);
-                return wrapTransportError(cardResult);
-            }
         }
         error? result = self.httpListener.attach(dispatcherService, JSON_RPC_MOUNT_PATH);
         if result is error {
@@ -175,9 +168,7 @@ public isolated class JsonRpcListener {
             self.dispatcher = ();
         }
         if dispatcherService is JsonRpcDispatcherService {
-            [CardRegistry, CardService, boolean] [registry, _, _] =
-                cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
-            registry.remove(JSON_RPC_MOUNT_PATH);
+            removeCardBinding(self.httpListener, JSON_RPC_MOUNT_PATH);
             error? result = self.httpListener.detach(dispatcherService);
             if result is error {
                 return wrapTransportError(result);

@@ -250,20 +250,13 @@ public isolated class RestListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
-        [CardRegistry, CardService, boolean] [registry, cardService, cardServiceIsNew] =
-            cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        if registry is error {
+            return wrapTransportError(registry);
+        }
         check registry.add(served, HTTP_JSON, mountPath);
         lock {
             self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
-        }
-        if cardServiceIsNew {
-            error? cardResult = self.httpListener.attach(cardService);
-            if cardResult is error {
-                self.forget(a2aService, mountPath);
-                // Not mounted, so the next attach must create and mount one.
-                dropCardState(self.httpListener);
-                return wrapTransportError(cardResult);
-            }
         }
         error? result = self.httpListener.attach(dispatcherService, mountPath);
         if result is error {
@@ -283,7 +276,7 @@ public isolated class RestListener {
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
                     dispatcherService = self.attached[i].dispatcher;
-                    self.cardRegistry().remove(self.attached[i].mountPath);
+                    removeCardBinding(self.httpListener, self.attached[i].mountPath);
                     _ = self.attached.remove(i);
                     break;
                 }
@@ -297,15 +290,6 @@ public isolated class RestListener {
         }
     }
 
-    # The card registry shared by every A2A listener on this `http:Listener`.
-    #
-    # + return - The registry
-    private isolated function cardRegistry() returns CardRegistry {
-        [CardRegistry, CardService, boolean] [registry, _, _] =
-            cardStateFor(self.httpListener, self.interfaceScheme, self.publicUrl);
-        return registry;
-    }
-
     # Undoes the bookkeeping of an attach that failed partway, so the card does
     # not advertise an interface that serves nothing and the path can be used
     # again.
@@ -314,7 +298,7 @@ public isolated class RestListener {
     # + mountPath - The path it was being attached at
     private isolated function forget(Service a2aService, string mountPath) {
         lock {
-            self.cardRegistry().remove(mountPath);
+            removeCardBinding(self.httpListener, mountPath);
             foreach int i in 0 ..< self.attached.length() {
                 if self.attached[i].agentService === a2aService {
                     _ = self.attached.remove(i);

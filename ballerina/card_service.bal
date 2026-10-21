@@ -102,41 +102,54 @@ isolated function withoutInterfaces(AgentCard card) returns AgentCard {
 // interface.
 isolated [http:Listener, CardRegistry, CardService][] sharedCardStates = [];
 
-# Finds or creates the card registry and card service of an `http:Listener`.
+# Finds the card registry of an `http:Listener`, creating it and mounting its
+# card service on first use.
+#
+# The card service is created and mounted under the lock that records it, so a
+# concurrent attach sees either no card state or one whose card service is
+# mounted, never one that is about to fail to mount. A card service that fails
+# to mount is not recorded, so the next attach tries again.
 #
 # + httpListener - The listener the cards are served on
 # + interfaceScheme - The scheme the listener serves
 # + publicUrl - The configured public URL, if any
-# + return - The registry, the card service, and whether the card service was just
-#            created and still has to be attached
-isolated function cardStateFor(http:Listener httpListener, string interfaceScheme, string? publicUrl)
-        returns [CardRegistry, CardService, boolean] {
+# + return - The registry, or the error mounting the card service
+isolated function cardRegistryFor(http:Listener httpListener, string interfaceScheme, string? publicUrl)
+        returns CardRegistry|error {
     lock {
-        foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, cardService] in
-                sharedCardStates {
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
             if existingListener === httpListener {
-                return [registry, cardService, false];
+                return registry;
             }
         }
         CardRegistry registry = new;
         CardService cardService = new (registry, interfaceScheme, publicUrl);
+        error? mounted = httpListener.attach(cardService);
+        if mounted is error {
+            return mounted;
+        }
         sharedCardStates.push([httpListener, registry, cardService]);
-        return [registry, cardService, true];
+        return registry;
     }
 }
 
-# Forgets the card state kept for an `http:Listener`, after mounting its card
-# service failed, so the next attach creates and mounts a new one.
+# Takes an interface off the card served on an `http:Listener`. A no-op when no
+# A2A listener has attached on it, so a detach never creates card state.
 #
-# + httpListener - The listener whose card service could not be mounted
-isolated function dropCardState(http:Listener httpListener) {
+# + httpListener - The listener the cards are served on
+# + mountPath - The interface's mount path
+isolated function removeCardBinding(http:Listener httpListener, string mountPath) {
+    CardRegistry? found = ();
     lock {
-        foreach int i in 0 ..< sharedCardStates.length() {
-            if sharedCardStates[i][0] === httpListener {
-                _ = sharedCardStates.remove(i);
-                return;
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
+            if existingListener === httpListener {
+                found = registry;
+                break;
             }
         }
+    }
+    if found is CardRegistry {
+        found.remove(mountPath);
     }
 }
 
