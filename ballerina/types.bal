@@ -208,6 +208,9 @@ public enum TaskState {
     TASK_STATE_AUTH_REQUIRED
 }
 
+# The terminal task states: no further transition is legal from any of them.
+public type TaskTerminalState TASK_STATE_COMPLETED|TASK_STATE_FAILED|TASK_STATE_CANCELED|TASK_STATE_REJECTED;
+
 # A Task's current lifecycle state.
 public type TaskStatus record {|
     # Current lifecycle state

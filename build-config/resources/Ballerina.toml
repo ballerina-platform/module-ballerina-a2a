@@ -10,3 +10,12 @@ repository = "https://github.com/ballerina-platform/module-ballerina-a2a"
 
 [build-options]
 observabilityIncluded = true
+
+[platform.java21]
+graalvmCompatible = true
+
+[[platform.java21.dependency]]
+groupId = "io.ballerina.lib"
+artifactId = "a2a-native"
+version = "@toml.version@"
+path = "../native/build/libs/a2a-native-@project.version@.jar"

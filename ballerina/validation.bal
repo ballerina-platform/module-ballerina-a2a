@@ -45,8 +45,7 @@ isolated function requireNonEmpty(string name, int length, boolean inbound) retu
     if length > 0 {
         return;
     }
-    string message = string `${name} is a required array and must contain at least one element `
-        + string `(specification section 5.7)`;
+    string message = string `${name} is a required array and must contain at least one element`;
     // Inbound is the agent's fault; outbound is the caller's. InternalError
     // is this library's catch-all for a client-side precondition failure --
     // the specification defines no error for one, since section 3.3.2 and
@@ -70,6 +69,46 @@ isolated function validateOutboundMessage(Message message) returns Error? {
             string m = variantError.message();
             return error InternalError(m, message = m);
         }
+    }
+}
+
+# Validates a Message a caller sent to this server.
+#
+# The same two rules as `validateOutboundMessage`, but a failure here is a bad
+# request (a 400), not the catch-all an outgoing message reports.
+#
+# + message - The message to check
+# + return - An `invalidRequest` error when it violates a specification requirement
+isolated function validateReceivedMessage(Message message) returns Error? {
+    if message.parts.length() == 0 {
+        // Specification section 5.7, as read by `requireNonEmpty`.
+        return invalidRequest("Message.parts is a required array and must contain at least one element",
+            "message.parts");
+    }
+    foreach [int, Part] [index, part] in message.parts.enumerate() {
+        int variants = countSetPartVariants(part);
+        if variants != 1 {
+            return invalidRequest(
+                string `Part must have exactly one of text, raw, url, or data set; found ${variants}`,
+                string `message.parts[${index}]`);
+        }
+    }
+}
+
+# Validates the id a caller chose for a push-notification config.
+#
+# The id becomes a path segment (`/tasks/{id}/pushNotificationConfigs/{configId}`),
+# so one containing `/` could never be fetched or deleted again. An unset or
+# empty id is fine: the server assigns one.
+#
+# + config - The config the caller supplied, or `()` if none was
+# + idField - Where the id sits in the request body, for the error's field violation
+# + return - An `invalidRequest` error if the id cannot be used as a path segment
+isolated function validatePushConfigId(TaskPushNotificationConfig? config,
+        string idField = "configuration.taskPushNotificationConfig.id") returns Error? {
+    string? id = config?.id;
+    if id is string && id.includes("/") {
+        return invalidRequest(string `push notification config id "${id}" must not contain '/'`, idField);
     }
 }
 
