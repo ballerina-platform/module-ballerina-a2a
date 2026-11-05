@@ -5,7 +5,7 @@ version = "@toml.version@"
 distribution = "2201.13.5"
 license = ["Apache-2.0"]
 authors = ["Ballerina"]
-keywords = ["a2a", "agent2agent", "agent", "protocol", "client"]
+keywords = ["a2a", "agent2agent", "agent", "protocol", "client", "server", "listener"]
 repository = "https://github.com/ballerina-platform/module-ballerina-a2a"
 
 [build-options]
