@@ -604,15 +604,13 @@ public isolated class DefaultHandler {
     # stream of every event the task produces, for the caller to frame as
     # SSE.
     #
-    # `driveTask` runs detached, exactly as `handleSendMessage`'s does; the
-    # difference is this returns as soon as a tap is attached to the
-    # task's broadcaster, instead of waiting for `driveTask` to finish.
-    # Per specification 3.1.2, what reaches the wire is: the just-seeded
-    # Task (emitted lazily by `updater`, only once the agent actually
-    # touches it -- see `TaskUpdater`) followed by the status/artifact
-    # events `execute` drives the task through, or -- for a direct
-    # reply, which never touches `updater` -- exactly one Message event,
-    # pushed by `driveTask` itself.
+    # The agent's `execute` runs detached, as it does for `handleSendMessage`,
+    # but this returns as soon as the stream is ready instead of waiting for
+    # `execute` to finish. Per specification section 3.1.2, the stream carries
+    # the new Task first, sent once the agent first updates it through the
+    # `TaskUpdater`, then the status and artifact events `execute` produces.
+    # An agent that replies with a direct Message instead produces exactly
+    # one Message event.
     #
     # + request - The decoded send request
     # + context - Who is calling, the tenant the request was routed under, and
@@ -673,18 +671,15 @@ public isolated class DefaultHandler {
     }
 
     # Handles subscribeToTask: the task's current state, followed by every
-    # further event a driver still running against it produces, live.
+    # further event the task produces, live.
     #
-    # Per specification 3.1.6, a task already in a terminal state cannot be
-    # subscribed to -- `UnsupportedOperationError`, the same rejection
-    # `handleSendMessage`/`handleSendStreamingMessage` give a message aimed at one.
-    # (This corrects this server's previous behavior, which answered a
-    # one-event snapshot instead; see the changelog.) Otherwise, the tap
-    # attaches to the task's broadcaster *before* the snapshot actually
-    # streamed is read -- attach-then-read can duplicate one event if a
-    # driver writes between the two (harmless: a client already reconciles
-    # on task state), but read-then-attach can lose one in the same window,
-    # which is not recoverable once missed.
+    # Per specification section 3.1.6, a task already in a terminal state
+    # cannot be subscribed to: that is an `UnsupportedOperationError`, the
+    # same rejection `handleSendMessage` and `handleSendStreamingMessage` give
+    # a message sent to such a task. The stream starts listening for the
+    # task's events before it reads the task's current state, so no event
+    # between the two is lost; at worst one arrives twice, which a client
+    # already tolerates.
     #
     # Subscribing to a task paused on `TASK_STATE_INPUT_REQUIRED` returns its
     # snapshot and then waits for the client's next message to drive it; the
@@ -907,8 +902,8 @@ public isolated class DefaultHandler {
     #             existing task
     # + context - Who is calling, as the listener established it
     # + return - The stored config, with `id` filled in, or a
-    #            TaskNotFoundError if `taskId` names no task visible to
-    #            `owner`
+    #            TaskNotFoundError if `taskId` names no task the caller can
+    #            see
     public isolated function handleCreateTaskPushNotificationConfig(Context context,
             TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
         string? owner = check self.resolveOwner(context);
@@ -957,7 +952,7 @@ public isolated class DefaultHandler {
 
     # Handles getTaskPushNotificationConfig.
     #
-    # A task not visible to `owner` is treated identically to an unknown
+    # A task the caller cannot see is treated identically to an unknown
     # config on a known task -- both are `TaskNotFoundError`, so a caller
     # cannot distinguish "not your task" from "no such config" by response
     # shape, per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
@@ -965,7 +960,7 @@ public isolated class DefaultHandler {
     # + request - The parent task id and the config's own id
     # + context - Who is calling, as the listener established it
     # + return - The config, or a TaskNotFoundError if either id is unknown,
-    #            or the task is not visible to `owner`
+    #            or the caller cannot see the task
     public isolated function handleGetTaskPushNotificationConfig(Context context,
             GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
         string? owner = check self.resolveOwner(context);
@@ -988,7 +983,7 @@ public isolated class DefaultHandler {
     # actually needed at realistic per-task config counts, so every result
     # is returned as one page.
     #
-    # A task not visible to `owner` returns an empty page, matching this
+    # A task the caller cannot see returns an empty page, matching this
     # operation's existing behavior for a genuinely unknown task -- neither
     # case is an error, and the two must stay indistinguishable per
     # [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping).
@@ -996,7 +991,7 @@ public isolated class DefaultHandler {
     # + request - The parent task id
     # + context - Who is calling, as the listener established it
     # + return - Every config registered for the task, or an empty page if
-    #            the task is not visible to `owner`
+    #            the caller cannot see the task
     public isolated function handleListTaskPushNotificationConfigs(Context context,
             ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
         string? owner = check self.resolveOwner(context);
@@ -1025,8 +1020,8 @@ public isolated class DefaultHandler {
     # Handles deleteTaskPushNotificationConfig. Idempotent per [specification section 3.1.10](https://a2a-protocol.org/latest/specification/#3110-delete-push-notification-config):
     # deleting an unknown config is not an error -- and, for the same
     # [section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) reasoning as `handleListTaskPushNotificationConfigs`,
-    # neither is deleting on a task that exists but is not visible to
-    # `owner`; both are a silent no-op, never distinguished from each other.
+    # neither is deleting on a task that exists but the caller cannot see;
+    # both are a silent no-op, never distinguished from each other.
     #
     # + request - The parent task id and the config's own id
     # + context - Who is calling, as the listener established it
