@@ -242,7 +242,7 @@ if result is a2a:AuthenticationError {
 
 An `AuthenticationError` carries the response's `WWW-Authenticate` challenges in `result.detail()?.data`, as `{"wwwAuthenticate": ["Bearer", ...]}`, which say which scheme the agent wants. Both types are recognised whether the agent answers with an A2A error body or, as a gateway or proxy does, with only the status. The same two types are what fails an `sendStreamingMessage` or `subscribeToTask` that is rejected before any event, and a card that itself sits behind authentication (`resolveAgentCard`).
 
-Specification section 5.x describes these two conditions without naming an error type, so these two names are this package's own.
+The specification describes these two conditions without naming an error type, so these two names are this package's own.
 
 ## 5. Inspecting a card
 
@@ -287,7 +287,9 @@ Two more describe a rejected request rather than a failed operation: `Authentica
 
 Anything the protocol does not name — a dropped connection, a malformed body, a response that does not match its declared shape, or a precondition this client checks before sending — surfaces as `InternalError`. No operation returns a bare, unmatchable `error`.
 
-## 7. Serving an Agent
+## 7. Serving an agent
+
+This is a complete agent: an executor holding the agent's logic, and a service on an `a2a:RestListener` that hands each operation to an `a2a:DefaultHandler`. The pieces are explained after it.
 
 ```ballerina
 import ballerina/a2a;
@@ -323,6 +325,10 @@ isolated class WeatherExecutor {
 isolated service on new a2a:RestListener(9090) {
 
     private final a2a:DefaultHandler handler = new (new WeatherExecutor());
+
+    isolated function init() {
+        io:println("Weather Agent listening on http://localhost:9090");
+    }
 
     isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
             returns a2a:Task|a2a:Message|a2a:Error {
@@ -377,10 +383,6 @@ isolated service on new a2a:RestListener(9090) {
             returns a2a:Error? {
         return self.handler.handleDeleteTaskPushNotificationConfig(context, request);
     }
-}
-
-function init() {
-    io:println(string `Weather Agent listening on http://localhost:9090`);
 }
 ```
 
@@ -467,7 +469,7 @@ listener a2a:RestListener agent = new (9090, publicUrl = "https://agents.example
 
 `publicUrl` must start with `http://` or `https://` and carry no query or fragment; a trailing `/` is dropped. `X-Forwarded-*` headers are not consulted, since any caller can send them.
 
-With `validateInputModes = true` on the listener, a message part that states a `mediaType` the card does not declare is answered with `ContentTypeNotSupportedError` (HTTP 400, JSON-RPC `-32005`), per specification sections 3.1.1 and 13. The media types accepted are the card's `defaultInputModes` together with every skill's `inputModes`; a card that declares none accepts everything, and a part with no `mediaType` is never rejected. A mode matches ignoring case and parameters, a bare type such as `text` matches all its subtypes, and `type/*` and `*/*` are wildcards. It is off by default, as in the reference SDKs: turning it on starts refusing content an agent used to accept.
+With `validateInputModes = true` on the listener, a message part that states a `mediaType` the card does not declare is answered with `ContentTypeNotSupportedError` (HTTP 400), per specification sections 3.1.1 and 13. The media types accepted are the card's `defaultInputModes` together with every skill's `inputModes`; a card that declares none accepts everything, and a part with no `mediaType` is never rejected. A mode matches ignoring case and parameters, a bare type such as `text` matches all its subtypes, and `type/*` and `*/*` are wildcards. It is off by default, as in the reference SDKs: turning it on starts refusing content an agent used to accept.
 
 ### 7.3 Task storage
 
