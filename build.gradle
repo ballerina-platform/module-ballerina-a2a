@@ -13,18 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * This is a trimmed root build.gradle: no native/ Java code and no
- * compiler-plugin submodule exist in this package, so the parts of the
- * real ballerina-platform module template that wire those up are omitted
- * rather than left as dead references. See CONFORMANCE_CHECKLIST.md.
+ * This is a trimmed root build.gradle: no compiler-plugin submodule exists
+ * in this package, and the native/ module is a plain jar with no
+ * dependencies of its own, so the parts of the real ballerina-platform
+ * module template that wire up checkstyle, spotbugs, shading and the
+ * compiler plugin are omitted rather than left as dead references.
  */
 
 plugins {
     // Provides the `release` task the release-package-template workflow runs
     // as `./gradlew clean release -Prelease.useAutomaticVersion=true`. The
     // spotbugs/shadow/download plugins the platform template also declares are
-    // omitted: all three exist to build native Java code, which this package
-    // has none of.
+    // omitted: they run static analysis on native code and shade its
+    // dependencies into the jar, and native/ uses only the Ballerina runtime,
+    // which the distribution provides.
     id "net.researchgate.release"
 }
 

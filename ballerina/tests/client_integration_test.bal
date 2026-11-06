@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Whole-client integration: HttpClient end to end.
+// Whole-client integration: RestClient end to end.
 //
 // The per-operation HTTP mechanics are covered in rest_client_test. What is
 // exercised here is that the client requires the binding it can speak, and
@@ -44,7 +44,7 @@ isolated function cardForBinding(TransportBinding binding) returns AgentCard => 
 
 @test:Config {}
 function testClientSelectsRestAndSpeaksIt() returns error? {
-    HttpClient c = check new (cardForBinding("HTTP+JSON"));
+    RestClient c = check new (cardForBinding("HTTP+JSON"));
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestRequest().path, "/tasks/task-1",
@@ -58,7 +58,7 @@ function testClientSelectsRestAndSpeaksIt() returns error? {
 // path each call actually puts on the wire catches it.
 @test:Config {}
 function testClientMapsEachOperationToItsOwnPath() returns error? {
-    HttpClient c = check new (cardForBinding("HTTP+JSON"));
+    RestClient c = check new (cardForBinding("HTTP+JSON"));
 
     setNextRestResponse({task: defaultTaskJson()});
     Task|Message _ = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
@@ -102,7 +102,7 @@ function testClientMapsEachOperationToItsOwnPath() returns error? {
 // value and so cannot be covered by the unary sweep above.
 @test:Config {}
 function testClientDelegatesStreamingOperations() returns error? {
-    HttpClient c = check new (cardForBinding("HTTP+JSON"));
+    RestClient c = check new (cardForBinding("HTTP+JSON"));
 
     setNextRestSseResponse([
         {data: taskJson("task-s1")},
@@ -136,7 +136,7 @@ function testClientDelegatesStreamingOperations() returns error? {
 // a parameter would still compile.
 @test:Config {}
 function testClientDelegationPassesArgumentsThrough() returns error? {
-    HttpClient c = check new (cardForBinding("HTTP+JSON"));
+    RestClient c = check new (cardForBinding("HTTP+JSON"));
 
     // The REST binding spends its arguments on the path and query string
     // rather than a parameter object, so that is where a dropped argument
@@ -165,22 +165,22 @@ function testClientFromCardDoesNotRefetchIt() returns error? {
     // re-resolved the card it would surface this 500 as a construction
     // error rather than succeeding.
     setWellKnownOverride({message: "well-known must not be fetched again"}, 500);
-    HttpClient|error c = new (card);
+    RestClient|error c = new (card);
     setWellKnownOverride(());
 
-    test:assertTrue(c is HttpClient,
+    test:assertTrue(c is RestClient,
             "a client built from a resolved card must use it as given, not fetch a second time");
 }
 
-// Confirms HttpClient satisfies the shared internal Client contract — not a
+// Confirms RestClient satisfies the shared internal Client contract — not a
 // caller-facing capability (Client isn't public; see client.bal).
 // When JSON-RPC and gRPC land, their clients must satisfy it too.
 @test:Config {}
-function testHttpClientSatisfiesClientContract() returns error? {
+function testRestClientSatisfiesClientContract() returns error? {
     setNextRestResponse(defaultTaskJson());
-    Client c = check new HttpClient(getServerBaseUrl());
+    Client c = check new RestClient(getServerBaseUrl());
     // Holding the concrete client as the contract type is the assertion: it
-    // only compiles because HttpClient satisfies the shared shape.
+    // only compiles because RestClient satisfies the shared shape.
     Task _ = check c->getTask({id: "task-1"});
     test:assertEquals(getLastRestRequest().path, "/tasks/task-1");
 }
@@ -199,7 +199,7 @@ function testClientRejectsCardWithNoHttpJsonInterface() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is InternalError,
             "a card declaring no HTTP+JSON interface must fail construction");
 }
@@ -217,7 +217,7 @@ function testClientRejectsV03ProtocolVersionOnItsInterface() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is VersionNotSupportedError,
             "a v0.3 interface must be rejected by version, not attempted as v1.0");
 }

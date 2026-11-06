@@ -67,7 +67,7 @@ public type CredentialProvider isolated object {
 #
 # ```ballerina
 # a2a:InMemoryCredentialStore store = new ({"bearer-admin": "tok_abc"});
-# a2a:HttpClient agent = check new ("https://agent.example.com", credentials = store);
+# a2a:RestClient agent = check new ("https://agent.example.com", credentials = store);
 # ```
 #
 # Credentials may be added or replaced after construction, so a refreshed

@@ -255,7 +255,7 @@ isolated function cardWithTenant(string tenant) returns AgentCard => {
 @test:Config {}
 function testClientInitFromUrl() returns error? {
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
-    HttpClient agentClient = check new (getServerBaseUrl());
+    RestClient agentClient = check new (getServerBaseUrl());
     Task|Message result = check agentClient->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task || result is Message);
 }
@@ -264,7 +264,7 @@ function testClientInitFromUrl() returns error? {
 function testClientInitFromAgentCard() returns error? {
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
-    HttpClient agentClient = check new (card);
+    RestClient agentClient = check new (card);
     Task|Message result = check agentClient->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task || result is Message);
 }
@@ -274,7 +274,7 @@ function testClientInitFromAgentCard() returns error? {
 @test:Config {}
 function testClientInitAutoWiresTenantFromCard() returns error? {
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
-    HttpClient agentClient = check new (cardWithTenant("acme-corp"));
+    RestClient agentClient = check new (cardWithTenant("acme-corp"));
     Task|Message _ = check agentClient->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     json params = getLastRestBody();
     test:assertEquals(check params.tenant, "acme-corp");
@@ -284,14 +284,14 @@ function testClientInitAutoWiresTenantFromCard() returns error? {
 @test:Config {}
 function testClientInitExplicitTenantOverridesCard() returns error? {
     setNextRestResponse({task: {id: "t1", status: {state: "TASK_STATE_COMPLETED"}}});
-    HttpClient agentClient = check new (cardWithTenant("acme-corp"), tenant = "explicit-tenant");
+    RestClient agentClient = check new (cardWithTenant("acme-corp"), tenant = "explicit-tenant");
     Task|Message _ = check agentClient->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     json params = getLastRestBody();
     test:assertEquals(check params.tenant, "explicit-tenant");
 }
 
 // A card offering only HTTP+JSON is perfectly usable: Client takes its
-// binding from the card, so it builds a HttpClient.
+// binding from the card, so it builds a RestClient.
 //
 // This previously failed. Client defaulted to JSONRPC and never consulted
 // the card ordering, which made a valid REST-only agent unreachable through
@@ -308,7 +308,7 @@ function testClientInitUsesTheOnlyBindingTheCardOffers() returns error? {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient c = check new (card);
+    RestClient c = check new (card);
 
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
@@ -330,7 +330,7 @@ function testClientInitFollowsCardOrderNotLibraryPreference() returns error? {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient c = check new (card);
+    RestClient c = check new (card);
 
     setNextRestResponse(defaultTaskJson());
     Task _ = check c->getTask({id: "task-1"});
@@ -350,7 +350,7 @@ function testClientInitErrorsWhenCardOffersNoSupportedBinding() {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is error,
             "a card declaring only a binding this library cannot speak must fail construction");
 }
@@ -358,7 +358,7 @@ function testClientInitErrorsWhenCardOffersNoSupportedBinding() {
 // An unreachable discovery URL must surface resolveAgentCard's error, not panic.
 @test:Config {}
 function testClientInitFromUrlUnreachableEndpoint() {
-    HttpClient|error result = new ("http://localhost:1");
+    RestClient|error result = new ("http://localhost:1");
     test:assertTrue(result is error, "unreachable discovery endpoint should surface as an error, not panic");
 }
 
@@ -375,7 +375,7 @@ function testSendMessageHappyPath() returns error? {
         }
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-1",
         role: ROLE_USER,
@@ -399,7 +399,7 @@ function testSendMessageHappyPath() returns error? {
 function testSendMessageIncludesRequestLevelMetadataWhenSet() returns error? {
     setNextRestResponse({task: {id: "task-1", status: {state: "TASK_STATE_COMPLETED"}}});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "msg-1", role: ROLE_USER, parts: [{text: "hi"}]};
     Task|Message _ = check c->sendMessage({message: msg, metadata: {"traceId": "abc-123"}});
 
@@ -411,7 +411,7 @@ function testSendMessageIncludesRequestLevelMetadataWhenSet() returns error? {
 function testSendMessageOmitsRequestLevelMetadataWhenUnset() returns error? {
     setNextRestResponse({task: {id: "task-1", status: {state: "TASK_STATE_COMPLETED"}}});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "msg-1", role: ROLE_USER, parts: [{text: "hi"}]};
     Task|Message _ = check c->sendMessage({message: msg});
 
@@ -423,7 +423,7 @@ function testSendMessageOmitsRequestLevelMetadataWhenUnset() returns error? {
 @test:Config {}
 function testSendMessageSendsRequestedExtensionsHeader() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c = check new (getServerBaseUrl(), requestedExtensions = ["urn:example:ext-a", "urn:example:ext-b"]);
+    RestClient c = check new (getServerBaseUrl(), requestedExtensions = ["urn:example:ext-a", "urn:example:ext-b"]);
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
     Task|Message _ = check c->sendMessage({message: msg});
 
@@ -445,14 +445,14 @@ function testClientInitDoesNotMutateCallerSuppliedConfigOrHeaders() returns erro
     map<string> headers1 = sharedHeaders.clone();
     headers1["X-Trace"] = "one";
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c1 = check new (getServerBaseUrl(), clientConfig = sharedConfig, headers = headers1);
+    RestClient c1 = check new (getServerBaseUrl(), clientConfig = sharedConfig, headers = headers1);
     Task|Message _ = check c1->sendMessage({message: msg});
     test:assertEquals(getLastRestHeaders()["x-trace"], "one");
 
     map<string> headers2 = sharedHeaders.clone();
     headers2["X-Trace"] = "two";
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c2 = check new (getServerBaseUrl(), clientConfig = sharedConfig, headers = headers2);
+    RestClient c2 = check new (getServerBaseUrl(), clientConfig = sharedConfig, headers = headers2);
     Task|Message _ = check c2->sendMessage({message: msg});
     test:assertEquals(getLastRestHeaders()["x-trace"], "two",
             "a second Client sharing the same base clientConfig must not inherit the first Client's headers");
@@ -467,7 +467,7 @@ function testClientInitAppliesCallerSuppliedAuthAndHeaders() returns error? {
     // this library does not derive it from the AgentCard's security
     // schemes (see issue #13). Both must reach the wire.
     setNextRestResponse({task: defaultTaskJson()});
-    HttpClient c = check new (getServerBaseUrl(),
+    RestClient c = check new (getServerBaseUrl(),
             clientConfig = {auth: {token: "explicit-tok"}},
             headers = {"X-Api-Key": "explicit-key"});
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
@@ -495,7 +495,7 @@ function testSendMessageHappyPathMessageVariant() returns error? {
         }
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-1a",
         role: ROLE_USER,
@@ -523,7 +523,7 @@ function testSendMessageRejectsResponseWithBothTaskAndMessage() returns error? {
         message: {messageId: "reply-ambiguous", role: "ROLE_AGENT", parts: [{text: "Hi there!"}]}
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-ambiguous",
         role: ROLE_USER,
@@ -544,7 +544,7 @@ function testSendMessageStreamHappyPath() returns error? {
         {data: string `{"statusUpdate":{"taskId":"task-2","contextId":"ctx-2","status":{"state":"TASK_STATE_COMPLETED"}}}`}
     ]);
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-2",
         role: ROLE_USER,
@@ -574,7 +574,7 @@ function testSendMessageStreamPausesAtInputRequiredThenResumes() returns error? 
         {data: string `{"statusUpdate":{"taskId":"task-3","contextId":"ctx-3","status":{"state":"TASK_STATE_INPUT_REQUIRED"}}}`}
     ]);
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message turn1 = {
         messageId: "msg-3",
         role: ROLE_USER,
@@ -623,7 +623,7 @@ function testSendMessageStreamPausesAtInputRequiredThenResumes() returns error? 
 function testGetTaskNotFoundErrorMapping() returns error? {
     setNextRestResponse({"error": {"message": "Task not found", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NOT_FOUND", "metadata": {taskId: "task-unknown"}}]}}, 404);
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task|error result = c->getTask({id: "task-unknown"});
 
     test:assertTrue(result is error, "an unknown task should surface as an error");
@@ -633,7 +633,7 @@ function testGetTaskNotFoundErrorMapping() returns error? {
 @test:Config {}
 function testGetTaskReturnsFailedState() returns error? {
     setNextRestResponse(taskJsonWithState("task-x", "TASK_STATE_FAILED"));
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task task = check c->getTask({id: "task-x"});
     test:assertEquals(task.status.state, TASK_STATE_FAILED);
 }
@@ -641,7 +641,7 @@ function testGetTaskReturnsFailedState() returns error? {
 @test:Config {}
 function testGetTaskReturnsRejectedState() returns error? {
     setNextRestResponse(taskJsonWithState("task-y", "TASK_STATE_REJECTED"));
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task task = check c->getTask({id: "task-y"});
     test:assertEquals(task.status.state, TASK_STATE_REJECTED);
 }
@@ -649,7 +649,7 @@ function testGetTaskReturnsRejectedState() returns error? {
 @test:Config {}
 function testGetTaskReturnsAuthRequiredState() returns error? {
     setNextRestResponse(taskJsonWithState("task-z", "TASK_STATE_AUTH_REQUIRED"));
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task task = check c->getTask({id: "task-z"});
     test:assertEquals(task.status.state, TASK_STATE_AUTH_REQUIRED);
 }
@@ -659,7 +659,7 @@ function testSendMessageMalformedEnvelopeMapping() returns error? {
     // Neither result nor error — a malformed JSON-RPC envelope.
     setNextRestResponse({});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-5",
         role: ROLE_USER,
@@ -674,7 +674,7 @@ function testSendMessageMalformedEnvelopeMapping() returns error? {
 @test:Config {}
 function testTenantPropagatesOnEveryMethod() returns error? {
     string tenant = "acme-corp";
-    HttpClient c = check new (getServerBaseUrl(), tenant = tenant);
+    RestClient c = check new (getServerBaseUrl(), tenant = tenant);
     Message msg = {
         messageId: "msg-tenant",
         role: ROLE_USER,
@@ -768,7 +768,7 @@ isolated function closeIfStream(stream<StreamResponse, error?>|error result) ret
 function testPerCallTenantOverridesClientDefault() returns error? {
     setNextRestResponse({task: {id: "task-tenant-2", status: {state: "TASK_STATE_COMPLETED"}}});
 
-    HttpClient c = check new (getServerBaseUrl(), tenant = "default-tenant");
+    RestClient c = check new (getServerBaseUrl(), tenant = "default-tenant");
     Message msg = {
         messageId: "msg-tenant-2",
         role: ROLE_USER,
@@ -801,7 +801,7 @@ function testClientConfigTimeoutPassthrough() returns error? {
     // Resolving separately (on the default config) keeps the tight timeout
     // scoped to the call being measured.
     AgentCard card = check resolveAgentCard(getServerBaseUrl());
-    HttpClient c = check new (card, clientConfig = {timeout: 0.1});
+    RestClient c = check new (card, clientConfig = {timeout: 0.1});
 
     // setNextJsonResponse resets delaySeconds to 0, so the delay has to be
     // scripted after it, not before. The original order set the delay first
@@ -829,7 +829,7 @@ function testListTasksHappyPath() returns error? {
         totalSize: 1
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTasksResponse result = check c->listTasks();
 
     test:assertEquals(result.tasks.length(), 1);
@@ -846,7 +846,7 @@ function testListTasksHappyPath() returns error? {
 function testListTasksSendsFilterFieldsOnWire() returns error? {
     setNextRestResponse({tasks: [], nextPageToken: "", pageSize: 20, totalSize: 0});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTasksResponse _ = check c->listTasks({
         contextId: "ctx-1",
         status: TASK_STATE_COMPLETED,
@@ -867,7 +867,7 @@ function testListTasksSendsFilterFieldsOnWire() returns error? {
 function testListTasksOmitsUnsetFilterFields() returns error? {
     setNextRestResponse({tasks: [], nextPageToken: "", pageSize: 20, totalSize: 0});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTasksResponse _ = check c->listTasks();
 
     map<string> query = getLastRestRequest().queryParams;
@@ -878,7 +878,7 @@ function testListTasksOmitsUnsetFilterFields() returns error? {
 @test:Config {}
 function testListTasksSendsAllFilterFields() returns error? {
     setNextRestResponse({tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTasksResponse _ = check c->listTasks({
         contextId: "ctx-1",
         status: TASK_STATE_WORKING,
@@ -902,7 +902,7 @@ function testListTasksSendsAllFilterFields() returns error? {
 function testCreateTaskPushNotificationConfigHappyPath() returns error? {
     setNextRestResponse({url: "https://client.example.com/webhooks/a2a", id: "webhook-1", taskId: "task-1"});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     TaskPushNotificationConfig config = check c->createTaskPushNotificationConfig({
         url: "https://client.example.com/webhooks/a2a",
         taskId: "task-1"
@@ -916,7 +916,7 @@ function testCreateTaskPushNotificationConfigHappyPath() returns error? {
 function testGetTaskPushNotificationConfigHappyPath() returns error? {
     setNextRestResponse({url: "https://client.example.com/webhooks/a2a", id: "webhook-1", taskId: "task-1"});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     TaskPushNotificationConfig config = check c->getTaskPushNotificationConfig({taskId: "task-1", id: "webhook-1"});
 
     test:assertEquals(config.url, "https://client.example.com/webhooks/a2a");
@@ -928,7 +928,7 @@ function testGetTaskPushNotificationConfigHappyPath() returns error? {
 function testCreateTaskPushNotificationConfigNotSupportedErrorMapping() returns error? {
     setNextRestResponse({"error": {"message": "Push notifications not supported", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED"}]}}, 400);
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     TaskPushNotificationConfig|error result = c->createTaskPushNotificationConfig({
         url: "https://client.example.com/webhooks/a2a",
         taskId: "task-1"
@@ -944,7 +944,7 @@ function testListTaskPushNotificationConfigsHappyPath() returns error? {
         nextPageToken: "cursor-abc"
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTaskPushNotificationConfigsResponse result = check c->listTaskPushNotificationConfigs({taskId: "task-1"});
 
     test:assertEquals((result.configs ?: []).length(), 1);
@@ -958,7 +958,7 @@ function testListTaskPushNotificationConfigsHappyPath() returns error? {
 function testListTaskPushNotificationConfigsSendsPaginationFieldsWhenSet() returns error? {
     setNextRestResponse({configs: [], nextPageToken: ""});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTaskPushNotificationConfigsResponse _ = check c->listTaskPushNotificationConfigs({taskId: "task-1", pageSize: 10, pageToken: "cursor-abc"});
 
     map<string> query = getLastRestRequest().queryParams;
@@ -970,7 +970,7 @@ function testListTaskPushNotificationConfigsSendsPaginationFieldsWhenSet() retur
 function testDeleteTaskPushNotificationConfigHappyPathReturnsNil() returns error? {
     setNextRestResponse({});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     error? result = c->deleteTaskPushNotificationConfig({taskId: "task-1", id: "webhook-1"});
 
     test:assertTrue(result is (), "a successful delete should return nil, not an error");
@@ -990,7 +990,7 @@ function testGetExtendedAgentCardHappyPath() returns error? {
         defaultOutputModes: ["text"]
     , supportedInterfaces: [{url: "http://localhost:19199", protocolBinding: "HTTP+JSON", protocolVersion: "1.0"}]});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     AgentCard card = check c->getExtendedAgentCard();
 
     test:assertEquals(card.name, "Mock Weather Agent (extended)");
@@ -1000,7 +1000,7 @@ function testGetExtendedAgentCardHappyPath() returns error? {
 function testGetExtendedAgentCardNotConfiguredErrorMapping() returns error? {
     setNextRestResponse({"error": {"message": "Extended agent card not configured", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "EXTENDED_AGENT_CARD_NOT_CONFIGURED"}]}}, 400);
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     AgentCard|error result = c->getExtendedAgentCard();
 
     test:assertTrue(result is ExtendedAgentCardNotConfiguredError, "code -32007 should map to ExtendedAgentCardNotConfiguredError");
@@ -1165,7 +1165,7 @@ function testSendMessageStreamReconnectsOnDrop() returns error? {
         {'event: "message", data: taskJson("task-1")},
         {'event: "message", data: statusUpdateJson("task-1", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
     StreamResponse first = check expectValue(s.next());
@@ -1193,7 +1193,7 @@ function testSendMessageStreamDoesNotReconnectByDefault() returns error? {
         {'event: "message", data: taskJson("task-1")},
         {'event: "message", data: statusUpdateJson("task-1", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "m2", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
 
@@ -1224,7 +1224,7 @@ function testSendMessageStreamDoesNotReconnectAfterBareMessage() returns error? 
     setNextRestSseResponseThenDrop([
         {'event: "message", data: messageJson("reply-1")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
     Message msg = {messageId: "m5", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
 
@@ -1252,7 +1252,7 @@ function testSubscribeToTaskReconnectsOnDrop() returns error? {
     setNextRestSseResponseThenDrop([
         {'event: "message", data: statusUpdateJson("task-7", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
     stream<StreamResponse, error?> s = check c->subscribeToTask({id: "task-7"});
 
     StreamResponse first = check expectValue(s.next());
@@ -1283,7 +1283,7 @@ function testSubscribeToTaskReconnectPreservesPerCallTenant() returns error? {
     setNextRestSseResponseThenDrop([
         {'event: "message", data: statusUpdateJson("task-10", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
     stream<StreamResponse, error?> s = check c->subscribeToTask({id: "task-10", tenant: "acme-corp"});
 
     StreamResponse first = check expectValue(s.next());
@@ -1311,7 +1311,7 @@ function testSendMessageStreamGivesUpAfterExhaustingReconnectAttempts() returns 
         {'event: "message", data: taskJson("task-8")},
         {'event: "message", data: statusUpdateJson("task-8", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 1);
     Message msg = {messageId: "m6", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
 
@@ -1340,7 +1340,7 @@ function testSendMessageStreamGivesUpAfterExhaustingReconnectAttempts() returns 
 // agent) that fails every single reconnect attempt, not just once,
 // reconnection never actually exhausted and recursed effectively without
 // bound (confirmed to hang indefinitely before the fix, extracting the raw
-// openTaskSubscriptionStream helper in http_client.bal). This scripts a target
+// openTaskSubscriptionStream helper in rest_client.bal). This scripts a target
 // that keeps failing every reconnect attempt (not just the first) with
 // maxReconnectAttempts = 2, so a persistently-unreachable agent must still
 // give up after exactly 2 reconnect attempts, quickly, not hang.
@@ -1350,7 +1350,7 @@ function testSendMessageStreamGivesUpWhenEveryReconnectAttemptFails() returns er
         {'event: "message", data: taskJson("task-9")},
         {'event: "message", data: statusUpdateJson("task-9", "TASK_STATE_WORKING")}
     ]);
-    HttpClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 2);
+    RestClient c = check new (getServerBaseUrl(), maxReconnectAttempts = 2);
     Message msg = {messageId: "m7", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
 
@@ -1380,7 +1380,7 @@ function testClientInitRejectsV03WithHttpJsonBinding() returns error? {
         defaultInputModes: ["text"],
         defaultOutputModes: ["text"]
     };
-    HttpClient|error result = new (card);
+    RestClient|error result = new (card);
     test:assertTrue(result is VersionNotSupportedError,
             "constructing an HTTP+JSON client against a card that resolves to V0_3 must fail fast with a typed error, not send a v0.3 JSON-RPC method name to a REST path");
 }
@@ -1390,7 +1390,7 @@ function testClientInitDefaultBindingUnchangedWithNoCard() returns error? {
     // Omitting agentCard entirely must construct exactly as before,
     // regardless of the new binding parameter's value, since self.mode
     // defaults to V1_0 when no card is given.
-    HttpClient _ = check new (getServerBaseUrl());
+    RestClient _ = check new (getServerBaseUrl());
 }
 
 // ---- REST/HTTP+JSON binding: non-streaming operations -----------------
@@ -1398,7 +1398,7 @@ function testClientInitDefaultBindingUnchangedWithNoCard() returns error? {
 @test:Config {}
 function testRestSendMessageSendsCorrectPathAndBody() returns error? {
     setNextRestResponse({"task": defaultTaskJson()});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
     Task|Message _ = check c->sendMessage({message: msg});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
@@ -1413,7 +1413,7 @@ function testRestSendMessageSendsCorrectPathAndBody() returns error? {
 @test:Config {}
 function testRestGetTaskSendsCorrectPathAndQuery() returns error? {
     setNextRestResponse(defaultTaskJson());
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task _ = check c->getTask({id: "task-123", historyLength: 5});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "GET");
@@ -1424,7 +1424,7 @@ function testRestGetTaskSendsCorrectPathAndQuery() returns error? {
 @test:Config {}
 function testRestCancelTaskSendsIdInPathAndBody() returns error? {
     setNextRestResponse(defaultTaskJson());
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task _ = check c->cancelTask({id: "task-123"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "POST");
@@ -1442,7 +1442,7 @@ function testRestHasBodyOperationDuplicatesTenantIntoBody() returns error? {
     // not just removed once it's substituted into the path (as it is for
     // bodiless operations, per testRestOperationWithTenantPrefixesPath).
     setNextRestResponse(defaultTaskJson());
-    HttpClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
+    RestClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
     Task _ = check c->cancelTask({id: "task-123"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.path, "/acme-corp/tasks/task-123:cancel");
@@ -1454,7 +1454,7 @@ function testRestHasBodyOperationDuplicatesTenantIntoBody() returns error? {
 @test:Config {}
 function testRestListTasksEncodesFilterAsQueryString() returns error? {
     setNextRestResponse({"tasks": [], "nextPageToken": "", "pageSize": 10, "totalSize": 0});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTasksResponse _ = check c->listTasks({
         contextId: "ctx-1",
         status: TASK_STATE_WORKING,
@@ -1471,7 +1471,7 @@ function testRestListTasksEncodesFilterAsQueryString() returns error? {
 @test:Config {}
 function testRestCreateTaskPushNotificationConfigSendsTaskIdInPathAndBody() returns error? {
     setNextRestResponse({"url": "http://webhook.example", "id": "cfg-1", "taskId": "task-1"});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     TaskPushNotificationConfig _ = check c->createTaskPushNotificationConfig({url: "http://webhook.example", taskId: "task-1"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "POST");
@@ -1483,7 +1483,7 @@ function testRestCreateTaskPushNotificationConfigSendsTaskIdInPathAndBody() retu
 @test:Config {}
 function testRestDeleteTaskPushNotificationConfigToleratesEmptyBody() returns error? {
     setNextRestResponse({}, statusCode = 204, hasResponseBody = false);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     error? result = c->deleteTaskPushNotificationConfig({taskId: "task-1", id: "cfg-1"});
     test:assertTrue(result is (), "a 204 with no body must be treated as success, not InvalidAgentResponseError");
 }
@@ -1491,7 +1491,7 @@ function testRestDeleteTaskPushNotificationConfigToleratesEmptyBody() returns er
 @test:Config {}
 function testRestGetExtendedAgentCardSendsCorrectPath() returns error? {
     setNextRestResponse(defaultMockAgentCard());
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     AgentCard _ = check c->getExtendedAgentCard();
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "GET");
@@ -1505,7 +1505,7 @@ function testRestGetTaskPushNotificationConfigSendsCorrectPath() returns error? 
     // params from workingParams (so they don't leak into the query
     // string) could go wrong.
     setNextRestResponse({"url": "http://webhook.example", "id": "cfg-1", "taskId": "task-1"});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     TaskPushNotificationConfig _ = check c->getTaskPushNotificationConfig({taskId: "task-1", id: "cfg-1"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "GET");
@@ -1516,7 +1516,7 @@ function testRestGetTaskPushNotificationConfigSendsCorrectPath() returns error? 
 @test:Config {}
 function testRestListTaskPushNotificationConfigsSendsCorrectPathAndQuery() returns error? {
     setNextRestResponse({"configs": [], "nextPageToken": ""});
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     ListTaskPushNotificationConfigsResponse _ = check c->listTaskPushNotificationConfigs({taskId: "task-1", pageSize: 10, pageToken: "cursor-abc"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.method, "GET");
@@ -1530,7 +1530,7 @@ function testRestSendStreamingMessageSendsCorrectPath() returns error? {
     setNextRestSseResponse([
         {'event: "message", data: string `{"task": {"id": "task-1", "status": {"state": "TASK_STATE_SUBMITTED"}}}`}
     ]);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
     StreamResponse _ = check expectValue(s.next());
@@ -1542,7 +1542,7 @@ function testRestSendStreamingMessageSendsCorrectPath() returns error? {
 @test:Config {}
 function testRestOperationWithTenantPrefixesPath() returns error? {
     setNextRestResponse(defaultTaskJson());
-    HttpClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
+    RestClient c = check new (getServerBaseUrl(), tenant = "acme-corp");
     Task _ = check c->getTask({id: "task-1"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.path, "/acme-corp/tasks/task-1");
@@ -1555,7 +1555,7 @@ function testRestPathParamWithSlashIsPercentEncodedNotLeftRaw() returns error? {
     // other characters, into a bogus query string / path-traversal
     // shape). Confirms the value is percent-encoded, not left as-is.
     setNextRestResponse(defaultTaskJson());
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task _ = check c->getTask({id: "task/with/slashes"});
     record {| string method; string path; map<string> queryParams; |} req = getLastRestRequest();
     test:assertEquals(req.path, "/tasks/task%2Fwith%2Fslashes", "a '/' in a path param must be percent-encoded, not left raw to restructure the path into extra segments");
@@ -1566,7 +1566,7 @@ function testRestErrorResponseMapsToTypedError() returns error? {
     setNextRestResponse({
         "error": {"message": "no such task", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NOT_FOUND"}]}
     }, statusCode = 404);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task|error result = c->getTask({id: "nonexistent"});
     test:assertTrue(result is TaskNotFoundError);
 }
@@ -1576,7 +1576,7 @@ function testRestSendMessageStreamDecodesBareStreamResponseNoEnvelope() returns 
     setNextRestSseResponse([
         {'event: "message", data: string `{"task": {"id": "task-1", "status": {"state": "TASK_STATE_SUBMITTED"}}}`}
     ]);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
     stream<StreamResponse, error?> s = check c->sendStreamingMessage({message: msg});
     StreamResponse first = check expectValue(s.next());
@@ -1588,7 +1588,7 @@ function testRestStreamErrorEventMapsToTypedError() returns error? {
     setNextRestSseResponse([
         {'event: "error", data: string `{"error": {"message": "boom", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "INVALID_AGENT_RESPONSE"}]}}`}
     ]);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     stream<StreamResponse, error?> s = check c->subscribeToTask({id: "task-1"});
     record {| StreamResponse value; |}|error? result = s.next();
     test:assertTrue(result is InvalidAgentResponseError, "a named 'error' SSE frame must route through toA2AErrorFromRest and surface as the typed error, not attempt to parse it as a StreamResponse");
@@ -1603,7 +1603,7 @@ function testRestSubscribeToTaskRetriesWithPostOn405() returns error? {
         {'event: "message", data: string `{"statusUpdate": {"taskId": "task-1", "contextId": "ctx-1", "status": {"state": "TASK_STATE_WORKING"}}}`}
     ]);
     setRestRejectMethod("GET", 405);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     stream<StreamResponse, error?> s = check c->subscribeToTask({id: "task-1"});
     StreamResponse first = check expectValue(s.next());
     test:assertEquals((<TaskStatusUpdateEvent>first).taskId, "task-1");
@@ -1618,7 +1618,7 @@ function testRestFallbackDoesNotFireForOtherOperations() returns error? {
     // a normal error, not trigger a retry — the fallback is scoped to
     // exactly this one operation.
     setNextRestResponse({}, statusCode = 405);
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task|error result = c->getTask({id: "task-1"});
     test:assertTrue(result is error, "a 405 on GetTask must surface as an error, not silently retry with a different verb");
 }
@@ -1647,7 +1647,7 @@ function testGetTaskDecodesBase64EncodedPartRawFromRealisticServerResponse() ret
         ]
     });
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Task task = check c->getTask({id: "task-raw-1"});
 
     Message[]? history = task?.history;
@@ -1668,7 +1668,7 @@ function testGetTaskDecodesBase64EncodedPartRawFromRealisticServerResponse() ret
 function testSendMessageEncodesPartRawAsBase64OnTheWire() returns error? {
     setNextRestResponse({task: {id: "task-raw-2", status: {state: "TASK_STATE_COMPLETED"}}});
 
-    HttpClient c = check new (getServerBaseUrl());
+    RestClient c = check new (getServerBaseUrl());
     Message msg = {
         messageId: "msg-raw-1",
         role: ROLE_USER,
@@ -1899,7 +1899,7 @@ function testGetExtendedAgentCardRejectsWhenCapabilityFalse() returns error? {
     // operation MUST return UnsupportedOperationError. Handing back the
     // public card gave the caller something other than what they asked for,
     // with no way to tell.
-    HttpClient c = check new (cardWithExtendedSupport(false, "Public Card"));
+    RestClient c = check new (cardWithExtendedSupport(false, "Public Card"));
     string primedPath = check primeLastRequest(c);
     test:assertEquals(primedPath, "/tasks/t-prime");
 
@@ -1913,7 +1913,7 @@ function testGetExtendedAgentCardRejectsWhenCapabilityFalse() returns error? {
 
 @test:Config {}
 function testGetExtendedAgentCardCallsOutWhenCapabilityTrue() returns error? {
-    HttpClient c = check new (cardWithExtendedSupport(true, "Public Card"));
+    RestClient c = check new (cardWithExtendedSupport(true, "Public Card"));
     setNextRestResponse({
         name: "Extended Card",
         description: "d",
@@ -1935,7 +1935,7 @@ function testGetExtendedAgentCardCallsOutWhenCapabilityTrue() returns error? {
 function testGetExtendedAgentCardStoresFetchedCard() returns error? {
     // The fetched card replaces the held one, so a second call reasons about
     // the extended card rather than the public card the Client started with.
-    HttpClient c = check new (cardWithExtendedSupport(true, "Public Card"));
+    RestClient c = check new (cardWithExtendedSupport(true, "Public Card"));
     setNextRestResponse({
         name: "Extended Card",
         description: "d",
@@ -1994,7 +1994,7 @@ isolated function cardWithPushNotificationsSupport(boolean supported) returns Ag
 
 @test:Config {}
 function testSendStreamingMessageFallsBackToUnaryWhenStreamingDenied() returns error? {
-    HttpClient c = check new (cardWithStreamingSupport(false));
+    RestClient c = check new (cardWithStreamingSupport(false));
     setNextRestResponse({task: defaultTaskJson()});
 
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
@@ -2015,7 +2015,7 @@ function testSendStreamingMessageFallbackWrapsMessageReply() returns error? {
     // The fallback's unary call can come back as a Message just as easily
     // as a Task - both SendMessageResult variants per specification
     // section 3.1.1 must wrap correctly.
-    HttpClient c = check new (cardWithStreamingSupport(false));
+    RestClient c = check new (cardWithStreamingSupport(false));
     setNextRestResponse({message: {messageId: "reply-1", role: "ROLE_AGENT", parts: [{text: "a direct reply"}]}});
 
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
@@ -2030,7 +2030,7 @@ function testSendStreamingMessageFallbackWrapsMessageReply() returns error? {
 @test:Config {}
 function testSendStreamingMessageOpensRealStreamWhenStreamingSupported() returns error? {
     // Regression guard: a card that supports streaming must be unaffected.
-    HttpClient c = check new (cardWithStreamingSupport(true));
+    RestClient c = check new (cardWithStreamingSupport(true));
     setNextRestSseResponse([{data: taskJson("task-1", "TASK_STATE_COMPLETED")}]);
 
     Message msg = {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]};
@@ -2045,7 +2045,7 @@ function testSubscribeToTaskRejectsClientSideWhenStreamingDenied() returns error
     // Unlike sendStreamingMessage, subscribing has no unary equivalent to
     // fall back to, so this must hard-error - and without ever reaching
     // the wire, per the issue's "no wasted round trips" requirement.
-    HttpClient c = check new (cardWithStreamingSupport(false));
+    RestClient c = check new (cardWithStreamingSupport(false));
     string primedPath = check primeLastRequest(c);
     test:assertEquals(primedPath, "/tasks/t-prime");
 
@@ -2059,7 +2059,7 @@ function testSubscribeToTaskRejectsClientSideWhenStreamingDenied() returns error
 
 @test:Config {}
 function testCreateTaskPushNotificationConfigRejectsClientSideWhenDenied() returns error? {
-    HttpClient c = check new (cardWithPushNotificationsSupport(false));
+    RestClient c = check new (cardWithPushNotificationsSupport(false));
     string primedPath = check primeLastRequest(c);
 
     TaskPushNotificationConfig|error result = c->createTaskPushNotificationConfig(
@@ -2073,7 +2073,7 @@ function testCreateTaskPushNotificationConfigRejectsClientSideWhenDenied() retur
 
 @test:Config {}
 function testGetTaskPushNotificationConfigRejectsClientSideWhenDenied() returns error? {
-    HttpClient c = check new (cardWithPushNotificationsSupport(false));
+    RestClient c = check new (cardWithPushNotificationsSupport(false));
     string primedPath = check primeLastRequest(c);
 
     TaskPushNotificationConfig|error result = c->getTaskPushNotificationConfig({taskId: "task-1", id: "webhook-1"});
@@ -2086,7 +2086,7 @@ function testGetTaskPushNotificationConfigRejectsClientSideWhenDenied() returns 
 
 @test:Config {}
 function testListTaskPushNotificationConfigsRejectsClientSideWhenDenied() returns error? {
-    HttpClient c = check new (cardWithPushNotificationsSupport(false));
+    RestClient c = check new (cardWithPushNotificationsSupport(false));
     string primedPath = check primeLastRequest(c);
 
     ListTaskPushNotificationConfigsResponse|error result = c->listTaskPushNotificationConfigs({taskId: "task-1"});
@@ -2107,7 +2107,7 @@ function testDeleteTaskPushNotificationConfigIsGatedLikeTheOtherThree() returns 
     // operation explicitly among the four that MUST return
     // PushNotificationNotSupportedError when the capability is false or not
     // present.
-    HttpClient c = check new (cardWithPushNotificationsSupport(false));
+    RestClient c = check new (cardWithPushNotificationsSupport(false));
 
     error? result = c->deleteTaskPushNotificationConfig({taskId: "task-1", id: "webhook-1"});
 
