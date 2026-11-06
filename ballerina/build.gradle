@@ -40,7 +40,7 @@ ballerina {
     module = packageName
     testCoverageParam = "--code-coverage --coverage-format=xml"
     langVersion = ballerinaLangVersion
-    platform = "java21"
+    platform = "java25"
 }
 
 // Ballerina.toml's version is generated, not hand-maintained: the template in

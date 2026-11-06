@@ -2,7 +2,7 @@
 org = "ballerina"
 name = "a2a"
 version = "0.1.0"
-distribution = "2201.13.5"
+distribution = "2201.14.0"
 license = ["Apache-2.0"]
 authors = ["Ballerina"]
 keywords = ["a2a", "agent2agent", "agent", "protocol", "client", "server", "listener"]
@@ -11,10 +11,10 @@ repository = "https://github.com/ballerina-platform/module-ballerina-a2a"
 [build-options]
 observabilityIncluded = true
 
-[platform.java21]
+[platform.java25]
 graalvmCompatible = true
 
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "a2a-native"
 version = "0.1.0-SNAPSHOT"
