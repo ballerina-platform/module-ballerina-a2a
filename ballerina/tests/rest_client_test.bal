@@ -187,7 +187,7 @@ function testRestClientDefaultsOmittedListTasksFieldsToZeroValue() returns error
 }
 
 // Same, for the canonical ProtoJSON rendering of an empty page: every
-// field but `tasks` (itself normalized separately, finding 24) absent.
+// field but `tasks` (itself normalized separately) absent.
 @test:Config {}
 function testRestClientDecodesEmptyListTasksObject() returns error? {
     RestClient c = check new (getServerBaseUrl());

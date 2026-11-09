@@ -383,7 +383,7 @@ isolated function defaultMockAgentCard() returns json {
         // getExtendedAgentCard short-circuits on a card declaring
         // extendedAgentCard=false, so a neutral fixture would silently stop
         // every extended-card test from ever reaching the wire. Same
-        // reasoning extends pushNotifications=true (issue #11): every
+        // reasoning extends pushNotifications=true: every
         // client-side capability gate short-circuits on a card declaring
         // the capability false, so a neutral fixture would silently stop
         // every push-notification-config test from ever reaching the wire.

@@ -50,11 +50,23 @@ type AuthFailure record {|
     string[] requiredScopes = [];
 |};
 
+# A caller an `auth` entry admitted.
+type AuthenticatedCaller record {|
+    # The name the credential carries
+    string identity;
+    # Who vouched for `identity`; see `a2a:Context.authority`
+    string[] authority;
+|};
+
 # One configured way of authenticating a request, and the `ballerina/http`
 # handler that checks it.
 isolated class AuthEntry {
     private final string scheme;
     private final (string|string[])? & readonly scopes;
+    private final string[] & readonly authority;
+    // Set for introspection, and for a JWT entry that pins no issuer: each
+    // token's own `iss` then further qualifies the authority.
+    private final boolean addsTokenIssuer;
     private final http:ListenerJwtAuthHandler? jwtHandler;
     private final http:ListenerOAuth2Handler? oauth2Handler;
     private final http:ListenerFileUserStoreBasicAuthHandler? fileHandler;
@@ -67,10 +79,16 @@ isolated class AuthEntry {
     # + configs - `RestListenerConfiguration.auth`
     # + index - The position of the entry this one is built from; it builds
     #           the rest of the chain behind it
-    # + return - An `a2a:InternalError` naming the entry, if its handler could
-    #            not be initialised
+    # + return - An `a2a:InternalError` naming the entry, if nothing in it
+    #            names its provider or its handler could not be initialised
     isolated function init(http:ListenerAuthConfig[] & readonly configs, int index = 0) returns Error? {
         http:ListenerAuthConfig config = configs[index];
+        string[]? authority = authorityOf(config);
+        if authority is () {
+            string msg = string `RestListenerConfiguration.auth[${index}] (jwtValidatorConfig) must set issuer: `
+                + "it verifies tokens with a secret or an in-memory key, which does not name its provider";
+            return error InternalError(msg, message = msg);
+        }
         http:ListenerJwtAuthHandler? jwtHandler = ();
         http:ListenerOAuth2Handler? oauth2Handler = ();
         http:ListenerFileUserStoreBasicAuthHandler? fileHandler = ();
@@ -118,6 +136,9 @@ isolated class AuthEntry {
         self.next = next;
         self.scheme = scheme;
         self.scopes = config?.scopes.cloneReadOnly();
+        self.authority = authority.cloneReadOnly();
+        self.addsTokenIssuer = config is http:OAuth2IntrospectionConfigWithScopes
+                || (config is http:JwtValidatorConfigWithScopes && config.jwtValidatorConfig?.issuer is ());
         self.jwtHandler = jwtHandler;
         self.oauth2Handler = oauth2Handler;
         self.fileHandler = fileHandler;
@@ -128,12 +149,12 @@ isolated class AuthEntry {
     #
     # + scheme - The request's credential scheme, lower-cased
     # + header - The full `Authorization` header value
-    # + return - The caller's identity, or why no entry admitted it
-    isolated function authenticateChain(string scheme, string header) returns string|AuthFailure {
+    # + return - The admitted caller, or why no entry admitted it
+    isolated function authenticateChain(string scheme, string header) returns AuthenticatedCaller|AuthFailure {
         AuthFailure? denied = ();
         if self.scheme == scheme {
-            string|http:Unauthorized|http:Forbidden result = self.verify(header);
-            if result is string {
+            AuthenticatedCaller|http:Unauthorized|http:Forbidden result = self.verify(header);
+            if result is AuthenticatedCaller {
                 return result;
             }
             // Identified but lacking a scope. The entries are alternatives, so
@@ -143,8 +164,9 @@ isolated class AuthEntry {
             }
         }
         AuthEntry? next = self.next;
-        string|AuthFailure rest = next is AuthEntry ? next.authenticateChain(scheme, header) : {forbidden: false};
-        if rest is string || denied is () {
+        AuthenticatedCaller|AuthFailure rest = next is AuthEntry ? next.authenticateChain(scheme, header)
+                : {forbidden: false};
+        if rest is AuthenticatedCaller || denied is () {
             return rest;
         }
         // No entry admitted the caller, and at least this one identified it:
@@ -170,13 +192,25 @@ isolated class AuthEntry {
         return scopes is string[] ? scopes.clone() : [];
     }
 
+    # The authority of a token this entry verified.
+    #
+    # + tokenIssuer - The token's `iss`, if it has one
+    # + return - The entry's authority, with `tokenIssuer` added when the
+    #            entry does not pin the issuer
+    isolated function authorityFor(string? tokenIssuer) returns string[] {
+        if self.addsTokenIssuer && tokenIssuer is string {
+            return [...self.authority, string `issuer=${tokenIssuer}`];
+        }
+        return [...self.authority];
+    }
+
     # Checks one `Authorization` header value against this entry.
     #
     # + header - The full header value
-    # + return - The caller's identity, `http:Unauthorized` if the credential
+    # + return - The admitted caller, `http:Unauthorized` if the credential
     #            is not valid, or `http:Forbidden` if it is valid but lacks
     #            a required scope
-    isolated function verify(string header) returns string|http:Unauthorized|http:Forbidden {
+    isolated function verify(string header) returns AuthenticatedCaller|http:Unauthorized|http:Forbidden {
         (string|string[])? scopes = self.scopes;
 
         http:ListenerJwtAuthHandler? jwtHandler = self.jwtHandler;
@@ -194,7 +228,7 @@ isolated class AuthEntry {
                     return denied;
                 }
             }
-            return identityOrUnauthorized(payload.sub, payload["username"]);
+            return callerOf(self.authorityFor(payload.iss), payload.sub, payload["username"]);
         }
 
         http:ListenerOAuth2Handler? oauth2Handler = self.oauth2Handler;
@@ -205,7 +239,7 @@ isolated class AuthEntry {
                 return result;
             }
             oauth2:IntrospectionResponse introspected = <oauth2:IntrospectionResponse>result;
-            return identityOrUnauthorized(introspected?.sub, introspected?.username);
+            return callerOf(self.authorityFor(introspected?.iss), introspected?.sub, introspected?.username);
         }
 
         http:ListenerFileUserStoreBasicAuthHandler? fileHandler = self.fileHandler;
@@ -220,7 +254,7 @@ isolated class AuthEntry {
                     return denied;
                 }
             }
-            return identityOrUnauthorized(authn.username);
+            return callerOf(self.authority, authn.username);
         }
 
         http:ListenerLdapUserStoreBasicAuthHandler? ldapHandler = self.ldapHandler;
@@ -235,27 +269,78 @@ isolated class AuthEntry {
                     return denied;
                 }
             }
-            return identityOrUnauthorized(authn.username);
+            return callerOf(self.authority, authn.username);
         }
         return <http:Unauthorized>{};
     }
 }
 
-# Picks the first usable identity claim.
+# The caller a verified credential names: its subject, else its `username`
+# claim, which is marked in the authority so it never matches another
+# caller's subject.
 #
 # A credential that validates but names no one cannot scope tasks to a caller
 # ([specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping)),
 # so it is treated as not authenticated rather than admitted anonymously.
 #
-# + candidates - The claims to try, in order
-# + return - The first non-empty string, or `http:Unauthorized` if none is
-isolated function identityOrUnauthorized(anydata... candidates) returns string|http:Unauthorized {
-    foreach anydata candidate in candidates {
-        if candidate is string && candidate != "" {
-            return candidate;
-        }
+# + authority - Who verified the credential
+# + subject - The token's `sub`, or the Basic username
+# + username - The token's `username` claim, if any
+# + return - The caller, or `http:Unauthorized` if the credential names no one
+isolated function callerOf(string[] authority, anydata subject, anydata username = ())
+        returns AuthenticatedCaller|http:Unauthorized {
+    if subject is string && subject != "" {
+        return {identity: subject, authority};
     }
-    return {};
+    if username is string && username != "" {
+        return {identity: username, authority: [...authority, "claim=username"]};
+    }
+    return <http:Unauthorized>{};
+}
+
+# Names the provider an `auth` entry trusts, by the parts of its
+# configuration that identify that provider. No secret field is used.
+#
+# + config - The entry
+# + return - The authority's parts, or `()` for a JWT entry that pins no
+#            issuer and verifies with only a secret or an in-memory key
+isolated function authorityOf(http:ListenerAuthConfig config) returns string[]? {
+    if config is http:JwtValidatorConfigWithScopes {
+        return jwtAuthorityOf(config.jwtValidatorConfig);
+    }
+    if config is http:OAuth2IntrospectionConfigWithScopes {
+        return ["oauth2", string `introspection=${config.oauth2IntrospectionConfig.url}`];
+    }
+    if config is http:FileUserStoreConfigWithScopes {
+        return ["file"];
+    }
+    http:LdapUserStoreConfig ldap = config.ldapUserStoreConfig;
+    return ["ldap", string `url=${ldap.connectionUrl}`, string `base=${ldap.userSearchBase}`];
+}
+
+# Names the provider a JWT entry trusts: the issuer it pins, else the source
+# of the keys it verifies signatures with.
+#
+# + config - The entry's validator configuration
+# + return - The authority's parts, or `()` when neither names the provider
+isolated function jwtAuthorityOf(http:JwtValidatorConfig config) returns string[]? {
+    string? issuer = config?.issuer;
+    if issuer is string {
+        return ["jwt", string `issuer=${issuer}`];
+    }
+    string? jwksUrl = config?.signatureConfig?.jwksConfig?.url;
+    if jwksUrl is string {
+        return ["jwt", string `jwks=${jwksUrl}`];
+    }
+    anydata certFile = config?.signatureConfig?.certFile;
+    if certFile is string {
+        return ["jwt", string `cert=${certFile}`];
+    }
+    string? trustStorePath = config?.signatureConfig?.trustStoreConfig?.trustStore?.path;
+    string? certAlias = config?.signatureConfig?.trustStoreConfig?.certAlias;
+    return (trustStorePath is string && certAlias is string)
+        ? ["jwt", string `truststore=${trustStorePath}`, string `alias=${certAlias}`]
+        : ();
 }
 
 # Authenticates inbound requests against the configured `auth` entries.
@@ -298,8 +383,8 @@ isolated class ListenerAuthenticator {
     #
     # + authorizationHeader - The request's `Authorization` value, or `()` if it
     #                         carried none
-    # + return - The caller's identity, or why it was not admitted
-    isolated function authenticate(string? authorizationHeader) returns string|AuthFailure {
+    # + return - The admitted caller, or why it was not admitted
+    isolated function authenticate(string? authorizationHeader) returns AuthenticatedCaller|AuthFailure {
         // Without a credential there is nothing to check, and the handlers log
         // an error when asked to look for one that is not there.
         if authorizationHeader is () {

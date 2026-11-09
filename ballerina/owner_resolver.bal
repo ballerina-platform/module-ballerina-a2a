@@ -31,11 +31,18 @@
 # Built once per inbound request by the binding that received it, after
 # authentication and tenant routing, and handed to `a2a:TaskOwnerResolver`.
 public type Context record {|
-    # The identity inbound authentication already established (a JWT's `sub`,
-    # the introspected `sub` or `username`, or the Basic username); unset
+    # The identity inbound authentication already established (a JWT's or the
+    # introspected `sub`, else its `username`, or the Basic username); unset
     # when no `auth` is configured. Prefer this over re-deriving an identity
-    # from `headers`: it is the verified one.
+    # from `headers`: it is the verified one. Unique only within its
+    # `authority`.
     string identity?;
+    # Who vouched for `identity`: the kind of `auth` entry, then labelled parts
+    # naming its provider, such as `["jwt", "issuer=https://idp.example.com"]` or
+    # `["file"]`. A token's own `iss` adds `issuer=<iss>` where the entry pins
+    # none, and an identity taken from the `username` claim adds
+    # `claim=username`. Set together with `identity`.
+    string[] authority?;
     # The tenant segment the request was routed under, if any
     string tenant?;
     # The request headers, with every name lower-cased, each mapped to all of
@@ -52,20 +59,19 @@ public type Context record {|
 # task-visibility scoping.
 #
 # `()` is a legitimate scope, not "unscoped" or "trusted": every caller a
-# configured resolver maps to `()` shares one pool, isolated from every
-# other scope, same as any other value. Leaving `a2a:DefaultHandlerConfiguration`'s
-# `ownerResolver` entirely unset is different from a resolver that always
-# returns `()` only in that the former matches this server's behavior before
-# this feature existed -- every task in one shared, unscoped pool.
+# resolver maps to `()` shares one pool, isolated from every other scope.
+# With no resolver configured, the owner is the identity `auth` established,
+# within its authority; with no `auth` either, every caller is in that one
+# shared pool.
 #
-# Implement this against whatever identifies a caller in your deployment — the
-# authenticated `identity`, an API key header
-# looked up against a directory. This resolves identity; it does not
-# authenticate it. A resolver that trusts an unverified header is not a
-# security boundary, and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
+# Implement this against whatever identifies a caller in your deployment: the
+# authenticated `identity` and its `authority`, or an API key header looked up
+# against a directory. This resolves identity; it does not authenticate it.
+# A resolver that trusts an unverified header is not a security boundary,
+# and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
 # pairing this with real inbound authentication: configure
-# `RestListenerConfiguration.auth`, which also makes the authenticated identity the
-# owner when no resolver is given.
+# `RestListenerConfiguration.auth`. A resolver can link accounts across
+# authorities on purpose, for example by returning `identity` alone.
 public type TaskOwnerResolver isolated object {
 
     # Resolves the request's caller to an owner scope.

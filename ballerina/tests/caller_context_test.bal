@@ -64,6 +64,7 @@ function testResolverReceivesTheAuthenticatedIdentity() returns error? {
     test:assertTrue(recorded is Context, "the resolver was never called");
     Context seen = <Context>recorded;
     test:assertEquals(seen?.identity, "alice");
+    test:assertEquals(seen?.authority, ["jwt", "issuer=a2a-auth-test"]);
     test:assertEquals(seen.headers["x-api-key"], ["key-1"]);
     test:assertEquals(seen?.tenant, ());
 }
@@ -75,8 +76,9 @@ function testCallerContextOfLowerCasesHeaderNamesAndKeepsEveryValue() {
     request.addHeader("Accept", "text/plain");
     request.addHeader("Accept", "application/json");
 
-    Context context = callerContextOf(request, "bob", "acme");
+    Context context = callerContextOf(request, {identity: "bob", authority: ["file"]}, "acme");
     test:assertEquals(context?.identity, "bob");
+    test:assertEquals(context?.authority, ["file"]);
     test:assertEquals(context?.tenant, "acme");
     test:assertEquals(context.headers["x-api-key"], ["k1"]);
     test:assertEquals(context.headers["accept"], ["text/plain", "application/json"]);

@@ -32,8 +32,13 @@ const int OAUTH2_AUTH_TEST_PORT = 19251;
 const int EMPTY_AUTH_TEST_PORT = 19252;
 const int EXTENDED_WITHOUT_AUTH_TEST_PORT = 19260;
 const int EXTENDED_WITH_AUTH_TEST_PORT = 19261;
+const int TWO_PROVIDER_AUTH_TEST_PORT = 19266;
+const int ROTATED_KEY_AUTH_TEST_PORT = 19267;
+const int LINKED_ACCOUNTS_AUTH_TEST_PORT = 19269;
+const int OWNER_RECORDING_AUTH_TEST_PORT = 19280;
 
 const string AUTH_TEST_SECRET = "a2a-auth-test-shared-secret-0123456789";
+const string SECOND_PROVIDER_SECRET = "a2a-auth-test-second-provider-secret-01";
 
 final AgentCard & readonly authTestCard = {
     name: "Guarded Agent",
@@ -111,7 +116,78 @@ listener RestListener resolverAuthListener = new (RESOLVER_AUTH_TEST_PORT, auth 
 
 final DefaultHandler oauth2AuthHandler = new (new CountingAgent());
 
-listener RestListener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT, auth = [{oauth2IntrospectionConfig: {url: string `http://localhost:${INTROSPECTION_STUB_PORT}/introspect`}}]);
+final http:OAuth2IntrospectionConfig authTestIntrospection = {
+    url: string `http://localhost:${INTROSPECTION_STUB_PORT}/introspect`
+};
+
+listener RestListener oauth2AuthListener = new (OAUTH2_AUTH_TEST_PORT,
+        auth = [{oauth2IntrospectionConfig: authTestIntrospection}]);
+
+// Two independent providers: one pins its issuer, the other is named by its
+// certificate and accepts any `iss`, so it can claim the first one's.
+final DefaultHandler twoProviderHandler = new (new CountingAgent());
+
+final http:JwtValidatorConfig certProviderValidator = {audience: "a2a", signatureConfig: {certFile: TEST_CERT}};
+
+listener RestListener twoProviderListener = new (TWO_PROVIDER_AUTH_TEST_PORT, auth = [
+        {jwtValidatorConfig: authTestJwtValidator},
+        {jwtValidatorConfig: certProviderValidator}
+    ]);
+
+// One provider whose signing key was rotated: both entries pin its issuer.
+final DefaultHandler rotatedKeyHandler = new (new CountingAgent());
+
+listener RestListener rotatedKeyListener = new (ROTATED_KEY_AUTH_TEST_PORT, auth = [
+        {jwtValidatorConfig: authTestJwtValidator},
+        {
+            jwtValidatorConfig: {
+                issuer: "a2a-auth-test",
+                audience: "a2a",
+                signatureConfig: {secret: SECOND_PROVIDER_SECRET}
+            }
+        }
+    ]);
+
+// Links same-named accounts from different providers on purpose.
+isolated class IdentityOwnerResolver {
+    *TaskOwnerResolver;
+
+    public isolated function resolveOwner(Context context) returns string?|Error => context?.identity;
+}
+
+final DefaultHandler linkedAccountsHandler = new (new CountingAgent(), ownerResolver = new IdentityOwnerResolver());
+
+listener RestListener linkedAccountsListener = new (LINKED_ACCOUNTS_AUTH_TEST_PORT, auth = [
+        {jwtValidatorConfig: authTestJwtValidator},
+        {fileUserStoreConfig: {}}
+    ]);
+
+isolated string? lastRecordedOwner = ();
+
+isolated class OwnerRecordingAgent {
+    *AgentExecutor;
+
+    public isolated function execute(RequestContext context, TaskUpdater updater) returns Message|Error? {
+        lock {
+            lastRecordedOwner = context?.owner;
+        }
+        check updater.complete();
+        return;
+    }
+}
+
+isolated function recordedOwner() returns string? {
+    lock {
+        return lastRecordedOwner;
+    }
+}
+
+final DefaultHandler ownerRecordingHandler = new (new OwnerRecordingAgent());
+
+listener RestListener ownerRecordingListener = new (OWNER_RECORDING_AUTH_TEST_PORT, auth = [
+        {jwtValidatorConfig: authTestJwtValidator},
+        {fileUserStoreConfig: {}}
+    ]);
 
 // A stand-in for an OAuth2 authorization server's RFC 7662 introspection
 // endpoint: "opaque-good" is an active token for carol, "opaque-inactive" is
@@ -125,6 +201,9 @@ service /introspect on introspectionStub {
         if token == "opaque-good" {
             return {active: true, sub: "carol", scope: "a2a:read"};
         }
+        if token == "opaque-issued" {
+            return {active: true, sub: "carol", iss: "https://as.example.com", scope: "a2a:read"};
+        }
         return {active: false};
     }
 }
@@ -136,6 +215,10 @@ function startAuthTestServers() returns error? {
     check multiAuthListener.attach(new FullService(multiAuthHandler, authTestCard), "rest");
     check resolverAuthListener.attach(new FullService(resolverAuthHandler, authTestCard), "rest");
     check oauth2AuthListener.attach(new FullService(oauth2AuthHandler, authTestCard), "rest");
+    check twoProviderListener.attach(new FullService(twoProviderHandler, authTestCard), "rest");
+    check rotatedKeyListener.attach(new FullService(rotatedKeyHandler, authTestCard), "rest");
+    check linkedAccountsListener.attach(new FullService(linkedAccountsHandler, authTestCard), "rest");
+    check ownerRecordingListener.attach(new FullService(ownerRecordingHandler, authTestCard), "rest");
 }
 
 // ---- helpers -------------------------------------------------------------
@@ -150,6 +233,21 @@ isolated function bearerToken(string subject, string scope = "a2a:read", decimal
         customClaims: {"scope": scope},
         signatureConfig: {algorithm: jwt:HS256, config: secret}
     });
+}
+
+// A token from the certificate-named provider, claiming the same issuer as
+// `bearerToken`. Without `subject`, it names the user by `username` alone.
+isolated function certSignedToken(string? subject, string? username = ()) returns string|error {
+    jwt:IssuerConfig config = {
+        issuer: "a2a-auth-test",
+        audience: "a2a",
+        customClaims: username is string ? {"username": username} : {},
+        signatureConfig: {algorithm: jwt:RS256, config: {keyFile: TEST_KEY}}
+    };
+    if subject is string {
+        config.username = subject;
+    }
+    return jwt:issue(config);
 }
 
 isolated function basicCredential(string user, string password) returns string =>
@@ -382,6 +480,153 @@ function testAuthOwnerResolverOverridesTheIdentity() returns error? {
     test:assertEquals(otherOwner.statusCode, 404);
 }
 
+// ---- one owner per authority ---------------------------------------------
+
+function assertTaskHiddenFrom(int port, string authorization, string taskId) returns error? {
+    RestClient intruder = check guardedClient(port, authorization);
+    Task|Error fetched = intruder->getTask({id: taskId});
+    test:assertTrue(fetched is TaskNotFoundError, "another owner's task must not be fetched");
+    Task|Error canceled = intruder->cancelTask({id: taskId});
+    test:assertTrue(canceled is TaskNotFoundError, "another owner's task must not be canceled");
+    stream<StreamResponse, error?>|Error subscribed = intruder->subscribeToTask({id: taskId});
+    test:assertTrue(subscribed is TaskNotFoundError, "another owner's task must not be subscribed to");
+    TaskPushNotificationConfig|Error registered = intruder->createTaskPushNotificationConfig(
+            {taskId, url: "https://example.com/hook"});
+    test:assertTrue(registered is TaskNotFoundError, "another owner's task must not take a webhook");
+    ListTasksResponse listed = check intruder->listTasks({});
+    foreach Task task in listed.tasks {
+        test:assertNotEquals(task.id, taskId, "another owner's task must not be listed");
+    }
+}
+
+@test:Config {}
+function testAuthSameNameFromAnotherProviderIsAnotherOwner() returns error? {
+    string jwtDave = "Bearer " + check bearerToken("dave");
+    string basicDave = basicCredential("dave", "dave-password");
+
+    Task jwtTask = check sendGuardedMessage(MULTI_AUTH_TEST_PORT, jwtDave, "jwt dave's task");
+    check assertTaskHiddenFrom(MULTI_AUTH_TEST_PORT, basicDave, jwtTask.id);
+
+    Task basicTask = check sendGuardedMessage(MULTI_AUTH_TEST_PORT, basicDave, "basic dave's task");
+    check assertTaskHiddenFrom(MULTI_AUTH_TEST_PORT, jwtDave, basicTask.id);
+
+    RestClient owner = check guardedClient(MULTI_AUTH_TEST_PORT, jwtDave);
+    Task fetched = check owner->getTask({id: jwtTask.id});
+    test:assertEquals(fetched.id, jwtTask.id, "the owner must still see its own task");
+}
+
+@test:Config {}
+function testAuthSameSubjectFromAnotherJwtProviderIsAnotherOwner() returns error? {
+    // Both tokens claim the same `iss` and `sub`; only the provider that signed them differs.
+    string first = "Bearer " + check bearerToken("dave");
+    string second = "Bearer " + check certSignedToken("dave");
+
+    Task firstTask = check sendGuardedMessage(TWO_PROVIDER_AUTH_TEST_PORT, first, "first provider's dave");
+    check assertTaskHiddenFrom(TWO_PROVIDER_AUTH_TEST_PORT, second, firstTask.id);
+
+    Task secondTask = check sendGuardedMessage(TWO_PROVIDER_AUTH_TEST_PORT, second, "second provider's dave");
+    check assertTaskHiddenFrom(TWO_PROVIDER_AUTH_TEST_PORT, first, secondTask.id);
+}
+
+@test:Config {}
+function testAuthEntriesPinningOneIssuerShareOwners() returns error? {
+    string oldKey = "Bearer " + check bearerToken("dave");
+    string newKey = "Bearer " + check bearerToken("dave", secret = SECOND_PROVIDER_SECRET);
+
+    Task created = check sendGuardedMessage(ROTATED_KEY_AUTH_TEST_PORT, oldKey, "before the key rotated");
+    RestClient rotated = check guardedClient(ROTATED_KEY_AUTH_TEST_PORT, newKey);
+    Task fetched = check rotated->getTask({id: created.id});
+    test:assertEquals(fetched.id, created.id, "a token signed with the issuer's new key must keep its tasks");
+}
+
+@test:Config {}
+function testAuthOwnerResolverCanLinkAccountsAcrossProviders() returns error? {
+    string jwtDave = "Bearer " + check bearerToken("dave");
+    Task created = check sendGuardedMessage(LINKED_ACCOUNTS_AUTH_TEST_PORT, jwtDave, "linked dave's task");
+
+    string basicCredentials = basicCredential("dave", "dave-password");
+    RestClient basicDave = check guardedClient(LINKED_ACCOUNTS_AUTH_TEST_PORT, basicCredentials);
+    Task fetched = check basicDave->getTask({id: created.id});
+    test:assertEquals(fetched.id, created.id, "a resolver returning the identity alone links the accounts");
+}
+
+@test:Config {}
+function testAuthOwnerIsTheIdentityWithinItsAuthority() returns error? {
+    string basicDave = basicCredential("dave", "dave-password");
+    Task _ = check sendGuardedMessage(OWNER_RECORDING_AUTH_TEST_PORT, basicDave, "owner-basic");
+    test:assertEquals(recordedOwner(), "[\"file\", \"dave\"]");
+
+    string jwtAlice = "Bearer " + check bearerToken("alice");
+    Task _ = check sendGuardedMessage(OWNER_RECORDING_AUTH_TEST_PORT, jwtAlice, "owner-jwt");
+    test:assertEquals(recordedOwner(), "[\"jwt\", \"issuer=a2a-auth-test\", \"alice\"]");
+}
+
+@test:Config {}
+function testAuthIdentityWithoutAnAuthorityIsItsOwnScope() returns error? {
+    DefaultHandler handler = new (new CountingAgent());
+    Context bare = {identity: "dave", headers: {}};
+    Context fromFileStore = {identity: "dave", authority: ["file"], headers: {}};
+    Task|Message sent = check handler.handleSendMessage(bare,
+            {message: {messageId: "m-bare-identity", role: ROLE_USER, parts: [{text: "hi"}]}});
+    test:assertTrue(sent is Task, "the agent completes a task");
+    string taskId = (<Task>sent).id;
+
+    Task|Error sameCaller = handler.handleGetTask(bare, {id: taskId});
+    test:assertTrue(sameCaller is Task, "the same context must see its task");
+    Task|Error otherCaller = handler.handleGetTask(fromFileStore, {id: taskId});
+    test:assertTrue(otherCaller is TaskNotFoundError, "a bare identity must not match an authority-qualified one");
+}
+
+// ---- the authority of each kind of entry ---------------------------------
+
+@test:Config {}
+function testAuthorityOfNamesTheProviderAndNoSecret() {
+    test:assertEquals(authorityOf({jwtValidatorConfig: authTestJwtValidator}), ["jwt", "issuer=a2a-auth-test"]);
+    http:JwtValidatorConfig jwks = {signatureConfig: {jwksConfig: {url: "https://idp.example/jwks"}}};
+    test:assertEquals(authorityOf({jwtValidatorConfig: jwks}), ["jwt", "jwks=https://idp.example/jwks"]);
+    test:assertEquals(authorityOf({jwtValidatorConfig: {signatureConfig: {certFile: "/certs/idp.crt"}}}),
+            ["jwt", "cert=/certs/idp.crt"]);
+    test:assertEquals(authorityOf({
+        jwtValidatorConfig: {
+            signatureConfig: {
+                trustStoreConfig: {trustStore: {path: "/certs/trust.p12", password: "store-pass"}, certAlias: "idp"}
+            }
+        }
+    }), ["jwt", "truststore=/certs/trust.p12", "alias=idp"]);
+    test:assertEquals(authorityOf({jwtValidatorConfig: {signatureConfig: {secret: AUTH_TEST_SECRET}}}), ());
+    test:assertEquals(authorityOf({oauth2IntrospectionConfig: authTestIntrospection}),
+            ["oauth2", string `introspection=${authTestIntrospection.url}`]);
+    test:assertEquals(authorityOf({fileUserStoreConfig: {}}), ["file"]);
+    test:assertEquals(authorityOf({ldapUserStoreConfig: unreachableLdapStore}),
+            ["ldap", "url=ldap://localhost:1", "base=ou=Users,dc=example,dc=com"]);
+}
+
+@test:Config {}
+function testAuthUnpinnedIssuerAndUsernameClaimQualifyTheAuthority() returns error? {
+    http:ListenerAuthConfig[] configs = [{jwtValidatorConfig: certProviderValidator}];
+    ListenerAuthenticator authenticator = check new (configs.cloneReadOnly());
+    string[] authority = ["jwt", string `cert=${TEST_CERT}`, "issuer=a2a-auth-test"];
+
+    AuthenticatedCaller|AuthFailure bySubject = authenticator.authenticate("Bearer " + check certSignedToken("dave"));
+    test:assertEquals(bySubject, {identity: "dave", authority});
+
+    string byUsernameToken = check certSignedToken((), username = "dave");
+    AuthenticatedCaller|AuthFailure byUsername = authenticator.authenticate("Bearer " + byUsernameToken);
+    test:assertEquals(byUsername, {identity: "dave", authority: [...authority, "claim=username"]});
+}
+
+@test:Config {}
+function testAuthIntrospectedIssuerQualifiesTheAuthority() returns error? {
+    http:ListenerAuthConfig[] configs = [{oauth2IntrospectionConfig: authTestIntrospection}];
+    ListenerAuthenticator authenticator = check new (configs.cloneReadOnly());
+    string endpoint = string `introspection=${authTestIntrospection.url}`;
+
+    test:assertEquals(authenticator.authenticate("Bearer opaque-good"),
+            {identity: "carol", authority: ["oauth2", endpoint]});
+    test:assertEquals(authenticator.authenticate("Bearer opaque-issued"),
+            {identity: "carol", authority: ["oauth2", endpoint, "issuer=https://as.example.com"]});
+}
+
 // ---- alternatives, and other mechanisms ---------------------------------
 
 @test:Config {}
@@ -447,6 +692,17 @@ final http:JwtValidatorConfig unreachableJwksValidator = {
     signatureConfig: {jwksConfig: {url: "http://localhost:1/jwks", cacheConfig: {capacity: 10}}}
 };
 
+final http:LdapUserStoreConfig unreachableLdapStore = {
+    domainName: "example.com", connectionUrl: "ldap://localhost:1", connectionName: "cn=admin",
+    connectionPassword: "x", userSearchBase: "ou=Users,dc=example,dc=com", userEntryObjectClass: "person",
+    userNameAttribute: "uid", userNameSearchFilter: "(&(objectClass=person)(uid=?))",
+    userNameListFilter: "(objectClass=person)", groupSearchBase: ["ou=Groups,dc=example,dc=com"],
+    groupEntryObjectClass: "groupOfNames", groupNameAttribute: "cn",
+    groupNameSearchFilter: "(&(objectClass=groupOfNames)(cn=?))",
+    groupNameListFilter: "(objectClass=groupOfNames)", membershipAttribute: "member",
+    connectionTimeout: 1
+};
+
 @test:Config {}
 function testAuthUnreachableJwksWithACacheIsAnErrorNotAPanic() {
     RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{jwtValidatorConfig: unreachableJwksValidator}]);
@@ -468,21 +724,20 @@ function testAuthFailingEntryIsNamedByItsPosition() {
 
 @test:Config {}
 function testAuthUnreachableLdapIsAnErrorNotAPanic() {
-    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{
-        ldapUserStoreConfig: {
-            domainName: "example.com", connectionUrl: "ldap://localhost:1", connectionName: "cn=admin",
-            connectionPassword: "x", userSearchBase: "ou=Users,dc=example,dc=com", userEntryObjectClass: "person",
-            userNameAttribute: "uid", userNameSearchFilter: "(&(objectClass=person)(uid=?))",
-            userNameListFilter: "(objectClass=person)", groupSearchBase: ["ou=Groups,dc=example,dc=com"],
-            groupEntryObjectClass: "groupOfNames", groupNameAttribute: "cn",
-            groupNameSearchFilter: "(&(objectClass=groupOfNames)(cn=?))",
-            groupNameListFilter: "(objectClass=groupOfNames)", membershipAttribute: "member",
-            connectionTimeout: 1
-        }
-    }]);
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{ldapUserStoreConfig: unreachableLdapStore}]);
     test:assertTrue(created is InternalError, "an unreachable LDAP server at startup must be a returned error");
     if created is Error {
         test:assertTrue(created.message().includes("auth[0] (ldapUserStoreConfig)"), created.message());
+    }
+}
+
+@test:Config {}
+function testAuthJwtEntryNamingNoProviderIsRejectedAtStartup() {
+    RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT,
+            auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: {signatureConfig: {secret: AUTH_TEST_SECRET}}}]);
+    test:assertTrue(created is InternalError, "an entry with only a secret must pin its issuer");
+    if created is Error {
+        test:assertTrue(created.message().includes("auth[1] (jwtValidatorConfig) must set issuer"), created.message());
     }
 }
 

@@ -53,7 +53,7 @@ const CONTENT_TYPE_A2A_JSON = "application/a2a+json";
 # error bodies.
 const CONTENT_TYPE_JSON = "application/json";
 
-# Whether the held Agent Card rules out streaming, per issue #11.
+# Whether the held Agent Card rules out streaming.
 #
 # "Denied" rather than "allowed" is the load-bearing framing: this answers
 # true only when a card exists AND explicitly says streaming is
@@ -67,7 +67,7 @@ isolated function cardDeniesStreaming(AgentCard? card) returns boolean {
     return card is AgentCard && !card.capabilities.streaming;
 }
 
-# Whether the held Agent Card rules out push notifications, per issue #11.
+# Whether the held Agent Card rules out push notifications.
 # Same "denied" framing as cardDeniesStreaming.
 #
 # + card - The client's held AgentCard, or () if it has none
@@ -660,7 +660,7 @@ public isolated client class RestClient {
     }
 
     # The unary sendMessage body, factored out so sendStreamingMessage's
-    # capability-gated fallback (issue #11) can call it without going
+    # capability-gated fallback can call it without going
     # through a remote method on self.
     #
     # + message - The message to send
@@ -699,8 +699,8 @@ public isolated client class RestClient {
     # Sends a message and receives updates as they happen, over REST SSE.
     #
     # Falls back to a single unary sendMessage call, wrapped as a one-event
-    # stream, when the held AgentCard says streaming is unsupported — see
-    # issue #11 — instead of opening (and having the server reject) a
+    # stream, when the held AgentCard says streaming is unsupported, instead
+    # of opening (and having the server reject) a
     # streaming connection.
     #
     # + request - The message to send and its send options
@@ -718,7 +718,7 @@ public isolated client class RestClient {
         if denied {
             // Falls back to a single unary call instead of opening (and
             // having the server reject) a streaming connection - see
-            // singleEventStream and issue #11.
+            // singleEventStream.
             Task|Message result = check self.sendMessageUnary(message, config, tenant, metadata);
             return singleEventStream(result);
         }
@@ -773,7 +773,7 @@ public isolated client class RestClient {
     #
     # Unlike sendStreamingMessage, subscribing to a task already in flight
     # has no unary equivalent to fall back to when the held AgentCard says
-    # streaming is unsupported — see issue #11 — so that case is rejected
+    # streaming is unsupported, so that case is rejected
     # client-side with an UnsupportedOperationError instead.
     #
     # + request - The task to subscribe to
@@ -788,8 +788,7 @@ public isolated client class RestClient {
         }
         if denied {
             // Unlike sendStreamingMessage, subscribing to a task already
-            // in flight has no unary equivalent to fall back to - see
-            // issue #11.
+            // in flight has no unary equivalent to fall back to.
             return streamingUnsupportedError("subscribeToTask");
         }
         stream<StreamResponse, Error?> rawStream = check self.openTaskSubscriptionStream(taskId, tenant);

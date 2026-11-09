@@ -1063,8 +1063,7 @@ function testServerRoundTripListTasks() returns error? {
         message: {messageId: "m2", role: ROLE_USER, parts: [{text: "two"}]}
     });
     // 100 is the maximum specification 3.1.4 allows; not "however many
-    // tasks exist" (finding 28 -- a request for more than the max used to
-    // be silently honoured in full instead of refused). Not asserting an
+    // tasks exist": a request for more than the maximum is refused. Not asserting an
     // empty nextPageToken either: this server is shared with every other
     // test in this file, so once their combined task count passes 100,
     // this genuinely is no longer the last page.
@@ -2171,11 +2170,10 @@ function stopEchoServer() returns error? {
 
 // ---- a caller's mistake is a 4xx, never a 5xx ----------------------------
 //
-// Found by the real-SDK interop pass (a2a-library-testing, I14): a path that
-// is no A2A operation, and a tenant the agent does not serve, were both
-// answered 500. The specification is silent on both cases; what it fixes is
-// the category -- 5xx is for system failures and an agent's own malformed
-// response, and neither is what a caller's typo is.
+// A path that is no A2A operation, and a tenant the agent does not serve, are
+// a caller's mistakes. The specification is silent on both cases; what it
+// fixes is the category -- 5xx is for system failures and an agent's own
+// malformed response, and neither is what a caller's typo is.
 
 isolated function reasonOf(http:Response resp) returns string?|error {
     json payload = check resp.getJsonPayload();

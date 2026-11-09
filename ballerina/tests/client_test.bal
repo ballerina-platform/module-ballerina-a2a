@@ -465,7 +465,7 @@ function testClientInitDoesNotMutateCallerSuppliedConfigOrHeaders() returns erro
 function testClientInitAppliesCallerSuppliedAuthAndHeaders() returns error? {
     // Auth is configured through clientConfig.auth and headers directly —
     // this library does not derive it from the AgentCard's security
-    // schemes (see issue #13). Both must reach the wire.
+    // schemes. Both must reach the wire.
     setNextRestResponse({task: defaultTaskJson()});
     RestClient c = check new (getServerBaseUrl(),
             clientConfig = {auth: {token: "explicit-tok"}},
@@ -593,7 +593,7 @@ function testSendMessageStreamPausesAtInputRequiredThenResumes() returns error? 
     record {| StreamResponse value; |}|error? afterPause = firstStream.next();
     test:assertTrue(afterPause is (), "no more events scripted after INPUT_REQUIRED for the first turn");
 
-    // Resume with the same taskId/contextId, as design §9.3 shows.
+    // Resume with the same taskId/contextId, as a multi-turn conversation does.
     setNextRestSseResponse([
         {data: string `{"statusUpdate":{"taskId":"task-3","contextId":"ctx-3","status":{"state":"TASK_STATE_WORKING"}}}`},
         {data: string `{"statusUpdate":{"taskId":"task-3","contextId":"ctx-3","status":{"state":"TASK_STATE_COMPLETED"}}}`}
@@ -1964,7 +1964,7 @@ function testGetExtendedAgentCardStoresFetchedCard() returns error? {
             "and the rejection is client-side: no second GetExtendedAgentCard request is produced");
 }
 
-// ---- issue #11: client-side capability gating -------------------------
+// ---- client-side capability gating ----------------------------------
 //
 // streaming and pushNotifications follow the same "denied only when a card
 // exists and explicitly says false" gate as extendedAgentCard above

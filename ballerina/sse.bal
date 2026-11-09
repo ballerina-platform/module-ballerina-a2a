@@ -42,8 +42,8 @@ isolated function readSseStream(http:Response resp)
 }
 
 # Iterates a raw SSE event stream, decoding each event into a
-# StreamResponse. Stops once a terminal task status is reached; per
-# design §8.1, a TaskArtifactUpdateEvent never closes the stream, and
+# StreamResponse. Stops once a terminal task status is reached; a
+# TaskArtifactUpdateEvent never closes the stream, and
 # interrupted states (INPUT_REQUIRED, AUTH_REQUIRED) also do not close it.
 class A2aStreamGenerator {
     private stream<http:SseEvent, error?> sseStream;
@@ -142,7 +142,7 @@ class A2aStreamGenerator {
 }
 
 # Wraps a unary sendMessage reply as a one-event StreamResponse stream, for
-# sendStreamingMessage's capability-gated fallback per issue #11: when the
+# sendStreamingMessage's capability-gated fallback: when the
 # held AgentCard says streaming is unsupported, the call degrades to a
 # single unary request instead of opening (and having the server reject) an
 # SSE connection. sendMessage already blocks until the task reaches a

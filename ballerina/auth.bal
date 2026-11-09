@@ -28,16 +28,6 @@
 //    schemes that *do* reduce to one string: API-key-in-header and HTTP
 //    bearer/basic. Given a card, the provider is asked for a credential by
 //    security-scheme name and the resolved value becomes a request header.
-//
-// An earlier buildAuthFromCard/ResolvedAuth pair was removed before
-// release (issue #13) for three reasons, each of which this addresses
-// rather than repeats: it claimed to cover all five scheme kinds while
-// genuinely handling two (this one documents the boundary and defers the
-// rest to route 1); no reference SDK did card-driven resolution at the
-// time (both now ship the same scheme-name-keyed CredentialService shape);
-// and it made resolution implicit (this is off unless a provider is
-// passed, and the read-only view of the same card data is exposed
-// separately in skill_security.bal).
 
 # Supplies credentials by security-scheme name.
 #

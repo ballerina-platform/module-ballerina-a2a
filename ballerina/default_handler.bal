@@ -67,8 +67,9 @@ public type DefaultHandlerConfiguration record {|
     AgentCard? extendedAgentCard = ();
     # Resolves each request's caller to an owner scope, for task-visibility
     # scoping per [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping). Unset, the identity the
-    # listener's `auth` established is the owner, and with no `auth` either,
-    # every task is visible to every caller. See `a2a:TaskOwnerResolver`.
+    # listener's `auth` established, within its authority, is the owner, and
+    # with no `auth` either, every task is visible to every caller. See
+    # `a2a:TaskOwnerResolver`.
     TaskOwnerResolver? ownerResolver = ();
     # Delivers task updates to registered push-notification webhooks.
     # Defaults to `a2a:HttpPushNotificationSender`, a real HTTP POST — unlike
@@ -141,8 +142,9 @@ public isolated class DefaultHandler {
     }
 
     # Resolves a caller's owner scope: the configured `a2a:TaskOwnerResolver`'s
-    # answer, or the authenticated identity when none is configured
-    # ([specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping)).
+    # answer, or when none is configured, the authenticated identity within
+    # its authority, so same-named accounts from different providers stay
+    # apart ([specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping)).
     #
     # + context - Who is calling, as the receiving listener established it
     # + return - The owner scope, `()` for the shared unscoped pool, or an
@@ -152,7 +154,12 @@ public isolated class DefaultHandler {
         if resolver is TaskOwnerResolver {
             return resolver.resolveOwner(context);
         }
-        return context?.identity;
+        string? identity = context?.identity;
+        if identity is () {
+            return;
+        }
+        string[] authority = context?.authority ?: [];
+        return [...authority, identity].toJsonString();
     }
 
     # Handles sendMessage: create a task (or continue an existing one named

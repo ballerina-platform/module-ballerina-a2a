@@ -195,17 +195,18 @@ isolated service class RestDispatcherService {
         // Authentication comes first, so a caller that has not proved who it
         // is learns nothing else about the server -- not even whether a tenant
         // exists.
-        string? identity = ();
+        AuthenticatedCaller? caller = ();
         ListenerAuthenticator? authenticator = self.authenticator;
         if authenticator is ListenerAuthenticator {
             string|http:HeaderNotFoundError authorization = req.getHeader(AUTHORIZATION_HEADER);
-            string|AuthFailure authenticated = authenticator.authenticate(authorization is string ? authorization : ());
+            AuthenticatedCaller|AuthFailure authenticated =
+                    authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
                 logAuthFailure(authenticated, req.method, pathOf(req),
                         authorization is string ? schemeOf(authorization) : ());
                 return toAuthErrorResponse(authenticated, authenticator.challengeHeaders());
             }
-            identity = authenticated;
+            caller = authenticated;
         }
 
         Error? versionError = self.checkVersion(req);
@@ -233,7 +234,7 @@ isolated service class RestDispatcherService {
         // The caller as the operations see it: who authentication established,
         // the tenant, the headers, and the stream policy. Each operation
         // resolves the owner itself.
-        Context context = callerContextOf(req, identity, tenant);
+        Context context = callerContextOf(req, caller, tenant);
         context.streamTiming = self.streamTiming;
         return context;
     }
@@ -872,14 +873,13 @@ isolated function interfaceUrlFor(string? publicUrl, string scheme, string host)
 # `a2a:TaskOwnerResolver` sees.
 #
 # Header names are lower-cased: HTTP treats them case-insensitively, and the
-# same resolver should read `x-api-key` whichever binding delivered it. The
-# client certificate is passed on only when the mutual TLS handshake passed.
+# same resolver should read `x-api-key` whichever binding delivered it.
 #
 # + req - The inbound request
-# + identity - The identity authentication established, or `()`
+# + caller - The caller authentication admitted, or `()`
 # + tenant - The tenant the request was routed under, or `()`
 # + return - The caller context
-isolated function callerContextOf(http:Request req, string? identity, string? tenant) returns Context {
+isolated function callerContextOf(http:Request req, AuthenticatedCaller? caller, string? tenant) returns Context {
     map<string[]> headers = {};
     foreach string name in req.getHeaderNames() {
         string key = name.toLowerAscii();
@@ -891,8 +891,9 @@ isolated function callerContextOf(http:Request req, string? identity, string? te
         }
     }
     Context context = {headers};
-    if identity is string {
-        context.identity = identity;
+    if caller is AuthenticatedCaller {
+        context.identity = caller.identity;
+        context.authority = caller.authority;
     }
     if tenant is string {
         context.tenant = tenant;

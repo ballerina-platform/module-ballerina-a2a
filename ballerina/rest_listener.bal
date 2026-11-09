@@ -41,13 +41,17 @@ public type RestListenerConfiguration record {|
     # does.
     #
     # The authenticated identity (a JWT's `sub`, the introspected `sub` or
-    # `username`, or the Basic username) becomes the task owner scope, so a
-    # caller sees only its own tasks ([section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping));
+    # `username`, or the Basic username), qualified by the provider the
+    # entry trusts (`a2a:Context.authority`), becomes the task owner scope, so
+    # a caller sees only its own tasks, and same-named accounts from different
+    # providers stay apart ([section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping));
     # a `DefaultHandlerConfiguration.ownerResolver`, if configured, takes
-    # precedence. Keep the card's `securitySchemes` in agreement with what is
-    # configured here. A card that declares neither `securitySchemes` nor
-    # `securityRequirements` gets both derived from `auth`: `Bearer` for JWT and
-    # OAuth2 entries, `Basic` for file and LDAP ones, one requirement per entry.
+    # precedence. A JWT entry that verifies with an HMAC secret or an in-memory
+    # key must set `issuer`, since nothing else in it names its provider. Keep
+    # the card's `securitySchemes` in agreement with what is configured here.
+    # A card that declares neither `securitySchemes` nor `securityRequirements`
+    # gets both derived from `auth`: `Bearer` for JWT and OAuth2 entries,
+    # `Basic` for file and LDAP ones, one requirement per entry.
     # Declare them yourself -- for example an `openIdConnect` scheme with your
     # provider's discovery URL -- and nothing is derived.
     #
@@ -101,9 +105,9 @@ public type RestListenerConfiguration record {|
     # such as `text` matches all its subtypes, and `type/*` and `*/*` are
     # wildcards.
     #
-    # Off by default, as in the reference SDKs: turning it on starts refusing
-    # content an agent used to accept, and the A2A TCK's `CORE-SEND-003` sends an
-    # undeclared media type and expects the send to succeed.
+    # Off by default, as in the reference SDKs: turning it on refuses content
+    # the agent would otherwise accept, and the A2A TCK's `CORE-SEND-003` sends
+    # an undeclared media type and expects the send to succeed.
     boolean validateInputModes = false;
 |};
 
@@ -111,10 +115,9 @@ public type RestListenerConfiguration record {|
 # everything left once this package's own fields are taken out.
 #
 # `RestListenerConfiguration` includes `http:ListenerConfiguration`, so a
-# caller can write `new a2a:RestListener(9090, timeout = 120)`. The
-# listener built for a port used to be created from an empty configuration,
-# silently dropping every one of those fields -- a `timeout`, or a
-# `secureSocket`, had no effect at all.
+# caller can write `new a2a:RestListener(9090, timeout = 120)`; the listener
+# built for a port takes those settings, such as a `timeout` or a
+# `secureSocket`, from here.
 #
 # + config - The full configuration
 # + return - The HTTP listener's own settings

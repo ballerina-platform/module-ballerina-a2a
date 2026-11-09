@@ -253,8 +253,8 @@ isolated function encodeRawBytesForWire(json value) returns json|error {
 # Structure-aware, not key-name-driven: same traversal allow-list as
 # encodeRawBytesForWire (see `partBearingContainerKeys`), so a response
 # whose free-form `metadata` happens to contain a "raw" key holding
-# arbitrary non-base64 text no longer fails to decode — that key is
-# simply never visited, because `metadata` is not in the allow-list.
+# arbitrary non-base64 text still decodes — that key is never visited,
+# because `metadata` is not in the allow-list.
 #
 # + value - A json value (or subtree) to walk
 # + return - The same tree with every Part.raw base64 string rewritten to
