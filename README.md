@@ -9,9 +9,9 @@
 
 ## Overview
 
-This module provides a Ballerina client for the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/latest/specification/) v1.0, an open protocol for communication between independent AI agents.
+This module provides a Ballerina client and server for the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/latest/specification/) v1.0, an open protocol for communication between independent AI agents.
 
-A2A lets an agent discover what another agent can do, delegate work to it, and follow that work as it progresses. An agent publishes an Agent Card describing its skills, transports, and authentication requirements; a client reads that card and talks to the agent over the transport it declares. This module implements the client side of that exchange over the HTTP+JSON binding.
+A2A lets an agent discover what another agent can do, delegate work to it, and follow that work as it progresses. An agent publishes an Agent Card describing its skills, transports, and authentication requirements; a client reads that card and talks to the agent over the transport it declares. This module implements both sides of that exchange over the HTTP+JSON binding: a client that calls an agent, and a listener that serves one.
 
 ## Issues and projects
 
@@ -22,7 +22,7 @@ This repository only contains the source code for the module.
 
 ### Prerequisites
 
-1. Download and install Java SE Development Kit (JDK) version 21 (from one of the following locations).
+1. Download and install Java SE Development Kit (JDK) version 25 (from one of the following locations).
 
    - [Oracle](https://www.oracle.com/java/technologies/downloads/)
    - [OpenJDK](https://adoptium.net/)

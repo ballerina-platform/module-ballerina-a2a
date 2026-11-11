@@ -87,7 +87,7 @@ type MockRestScript record {|
     // succeeds normally. () means no rejection scripted.
     string? rejectMethod = ();
     int rejectStatusCode = 0;
-    // Content-type negotiation support (http_client.bal's
+    // Content-type negotiation support (rest_client.bal's
     // performRestCallWithNegotiation): when set, the mock rejects exactly
     // one request carrying this Content-Type with this status, then
     // clears itself so the retry (a different Content-Type) succeeds
@@ -97,6 +97,11 @@ type MockRestScript record {|
     // How long the mock waits before responding, for exercising
     // http:ClientConfiguration.timeout passthrough.
     decimal delaySeconds = 0;
+    // Finding 34: a body that isn't valid JSON at all (a truncated
+    // stream, an HTML error page) rather than well-formed JSON with the
+    // wrong shape. () means send jsonBody as normal.
+    string? rawBody = ();
+    string rawContentType = "application/json";
 |};
 
 isolated MockRestScript restScript = {};
@@ -106,6 +111,16 @@ isolated MockRestScript restScript = {};
 public isolated function setNextRestResponse(json body, int statusCode = 200, boolean hasResponseBody = true) {
     lock {
         restScript = {jsonBody: body.clone(), statusCode, hasResponseBody};
+    }
+}
+
+// Scripts the next REST request to receive a 2xx whose body is not valid
+// JSON at all — a truncated stream or an HTML error page, e.g. — rather
+// than well-formed JSON of the wrong shape. Finding 34.
+//
+public isolated function setNextRestResponseRaw(string body, string contentType = "application/json", int statusCode = 200) {
+    lock {
+        restScript = {statusCode, rawBody: body, rawContentType: contentType};
     }
 }
 
@@ -368,7 +383,7 @@ isolated function defaultMockAgentCard() returns json {
         // getExtendedAgentCard short-circuits on a card declaring
         // extendedAgentCard=false, so a neutral fixture would silently stop
         // every extended-card test from ever reaching the wire. Same
-        // reasoning extends pushNotifications=true (issue #11): every
+        // reasoning extends pushNotifications=true: every
         // client-side capability gate short-circuits on a card declaring
         // the capability false, so a neutral fixture would silently stop
         // every push-notification-config test from ever reaching the wire.
@@ -615,7 +630,11 @@ service / on mockListener {
         }
 
         http:Response res = new;
-        if script.isSse {
+        if script.rawBody is string {
+            res.statusCode = script.statusCode;
+            res.setTextPayload(<string>script.rawBody, contentType = script.rawContentType);
+            check caller->respond(res);
+        } else if script.isSse {
             // caller->respond() with a raw stream defaults POST responses
             // to 201; the Client checks for exactly 200, so set it explicitly.
             res.statusCode = 200;
@@ -663,3 +682,300 @@ public isolated function extractArtifactText(Artifact artifact) returns string? 
     }
     return;
 }
+
+// ---- Deterministic pacing for live-streaming tests --------------------
+//
+// A step-counted gate lets a test drive an agent through its checkpoints
+// one at a time, reading whatever each checkpoint broadcasts before
+// releasing the next one -- instead of a runtime:sleep-timed guess at how
+// long "the agent has gotten far enough" takes, which flakes under load.
+// server_roundtrip_test.bal's EchoAgent blocks on one of these at each
+// checkpoint when its message text is "paced:<key>"; the test registers a
+// Gate under that same key before sending the message.
+
+# Blocks a paced agent at successive checkpoints until a test explicitly
+# releases each one.
+public isolated class Gate {
+    private int currentStep = 0;
+
+    # Blocks (polling) until the gate has been advanced to at least `step`.
+    #
+    # + step - The step to wait for
+    public isolated function awaitStep(int step) {
+        while true {
+            lock {
+                if self.currentStep >= step {
+                    return;
+                }
+            }
+            runtime:sleep(0.02);
+        }
+    }
+
+    # Releases every checkpoint up to and including `step`.
+    #
+    # + step - The step to advance to
+    public isolated function advanceTo(int step) {
+        lock {
+            self.currentStep = step;
+        }
+    }
+}
+
+isolated map<Gate> paceGates = {};
+
+# Registers the Gate a "paced:<key>" message's agent will block on.
+# Call before sending that message -- the agent looks the key up as soon
+# as it starts running, which can be immediately once the request lands.
+#
+# + key - The pacing key embedded in the message text after "paced:"
+# + gate - The gate to register
+public isolated function registerGate(string key, Gate gate) {
+    lock {
+        paceGates[key] = gate;
+    }
+}
+
+# + key - The pacing key to look up
+# + return - The registered gate, or `()` if none was registered
+public isolated function gateFor(string key) returns Gate? {
+    lock {
+        return paceGates[key];
+    }
+}
+
+// ---- test services ---------------------------------------------------------
+//
+// Each delegates the operations it defines to a DefaultHandler and returns its
+// card from handleGetAgentCard, so a test chooses the card per instance.
+
+// Every operation but the extended card.
+isolated service class FullService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    isolated resource function get agentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSendStreamingMessage(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSubscribeToTask(context, request);
+    }
+
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.handleGetTask(context, request);
+    }
+
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.handleListTasks(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.handleCancelTask(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleCreateTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleGetTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.handleListTaskPushNotificationConfigs(context, request);
+    }
+
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.handleDeleteTaskPushNotificationConfig(context, request);
+    }
+}
+
+// Every operation, including the extended card.
+isolated service class ExtendedService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    isolated resource function get agentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSendStreamingMessage(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSubscribeToTask(context, request);
+    }
+
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.handleGetTask(context, request);
+    }
+
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.handleListTasks(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.handleCancelTask(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleCreateTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleGetTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.handleListTaskPushNotificationConfigs(context, request);
+    }
+
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.handleDeleteTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get extendedAgentCard(Context context, GetExtendedAgentCardRequest request) returns AgentCard|Error {
+        return self.handler.handleGetExtendedAgentCard(context, request);
+    }
+}
+
+// No streaming: card says streaming false.
+isolated service class NoStreamingService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    isolated resource function get agentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.handleGetTask(context, request);
+    }
+
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.handleListTasks(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.handleCancelTask(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/pushNotificationConfigs(Context context, TaskPushNotificationConfig request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleCreateTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs/[string configId](Context context, GetTaskPushNotificationConfigRequest request) returns TaskPushNotificationConfig|Error {
+        return self.handler.handleGetTaskPushNotificationConfig(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/pushNotificationConfigs(Context context, ListTaskPushNotificationConfigsRequest request) returns ListTaskPushNotificationConfigsResponse|Error {
+        return self.handler.handleListTaskPushNotificationConfigs(context, request);
+    }
+
+    isolated resource function delete tasks/[string id]/pushNotificationConfigs/[string configId](Context context, DeleteTaskPushNotificationConfigRequest request) returns Error? {
+        return self.handler.handleDeleteTaskPushNotificationConfig(context, request);
+    }
+}
+
+// No push notifications: card says pushNotifications false.
+isolated service class NoPushService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    isolated resource function get agentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    isolated resource function post message\:send(Context context, SendMessageRequest request) returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+
+    isolated resource function post message\:stream(Context context, SendMessageRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSendStreamingMessage(context, request);
+    }
+
+    isolated resource function get tasks/[string id]/subscribe(Context context, SubscribeToTaskRequest request) returns stream<StreamResponse, Error?>|Error {
+        return self.handler.handleSubscribeToTask(context, request);
+    }
+
+    isolated resource function get tasks/[string id](Context context, GetTaskRequest request) returns Task|Error {
+        return self.handler.handleGetTask(context, request);
+    }
+
+    isolated resource function get tasks(Context context, ListTasksRequest request) returns ListTasksResponse|Error {
+        return self.handler.handleListTasks(context, request);
+    }
+
+    isolated resource function post tasks/[string id]/cancel(Context context, CancelTaskRequest request) returns Task|Error {
+        return self.handler.handleCancelTask(context, request);
+    }
+}
+
+// Only sendMessage, for tests about the card, auth or the wire.
+isolated service class MessageOnlyService {
+    *Service;
+
+    private final DefaultHandler handler;
+    private final AgentCard & readonly card;
+
+    isolated function init(DefaultHandler handler, AgentCard card) {
+        self.handler = handler;
+        self.card = card.cloneReadOnly();
+    }
+
+    isolated resource function get agentCard() returns AgentCard|Error {
+        return self.card;
+    }
+
+    isolated resource function post message\:send(Context context, SendMessageRequest request)
+            returns Task|Message|Error {
+        return self.handler.handleSendMessage(context, request);
+    }
+}
+

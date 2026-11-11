@@ -208,6 +208,9 @@ public enum TaskState {
     TASK_STATE_AUTH_REQUIRED
 }
 
+# The terminal task states: no further transition is legal from any of them.
+public type TaskTerminalState TASK_STATE_COMPLETED|TASK_STATE_FAILED|TASK_STATE_CANCELED|TASK_STATE_REJECTED;
+
 # A Task's current lifecycle state.
 public type TaskStatus record {|
     # Current lifecycle state
@@ -335,9 +338,7 @@ public type TaskPushNotificationConfig record {|
 public type SendMessageConfiguration record {|
     # Content types the caller can accept in the response. Omit to impose no
     # constraint -- that is the specification's own meaning for unset, and
-    # agents SHOULD tailor their output to whatever this says. It previously
-    # defaulted to ["text"], which quietly told every agent to withhold
-    # images and files unless a caller overrode it.
+    # agents SHOULD tailor their output to whatever this says.
     string[] acceptedOutputModes?;
     # Unset imposes no limit; zero omits history entirely; a positive value
     # requests at most that many recent messages
@@ -678,9 +679,8 @@ public type SecurityRequirement map<string[]>;
 # This library captures the signature's shape so a card round-trips
 # without loss, but does **not** verify it. Spec 8.4.3 mandates a
 # canonicalize-and-verify procedure without defining an API for it, and
-# no reference SDK implements one; a prior attempt here could not perform
-# the RFC 8785 canonicalization the procedure requires. Callers needing
-# verification must do it out-of-band for now. See issue #12.
+# no reference SDK implements one. Callers needing verification must do it
+# out-of-band.
 public type AgentCardSignature record {|
     # Unprotected JWS header values
     map<json> header?;

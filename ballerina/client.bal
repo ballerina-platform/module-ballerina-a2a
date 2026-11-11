@@ -18,12 +18,12 @@
 
 # The client-side A2A operation set (specification section 9.4), declared once
 # as the shared client contract rather than repeating eleven signatures per
-# client type. The HTTP+JSON client `a2a:HttpClient` includes it via `*Client;`;
+# client type. The HTTP+JSON client `a2a:RestClient` includes it via `*Client;`;
 # when JSON-RPC and gRPC land, the transport-agnostic client is published under
 # this name.
 #
 # Not public yet: Ballerina object types are structurally typed, so a caller
-# writes against `a2a:HttpClient` directly, or declares their own local object
+# writes against `a2a:RestClient` directly, or declares their own local object
 # type covering the methods they use, with no dependency on this one.
 #
 # Every method returns a narrowed `a2a:Error`, never a bare `error`. The

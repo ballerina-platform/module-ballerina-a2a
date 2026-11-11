@@ -1281,6 +1281,9 @@ function testEmptyMessagePartsIsRejectedOutbound() {
 
     test:assertTrue(result is InternalError,
             "a caller's own malformed message is caught before the request is sent");
+    if result is Error {
+        test:assertEquals(result.message(), "Message.parts is a required array and must contain at least one element");
+    }
 }
 
 // An AgentCard with no skills is explicitly valid: the specification's own

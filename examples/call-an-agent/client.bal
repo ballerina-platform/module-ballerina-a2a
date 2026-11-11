@@ -20,7 +20,7 @@ public function main() returns error? {
     a2a:AgentCard card = check a2a:resolveAgentCard(agentUrl);
     io:println(string `Connected to "${card.name}": ${card.description}`);
 
-    a2a:HttpClient agent = check new (card);
+    a2a:RestClient agent = check new (card);
 
     a2a:Task|a2a:Message reply = check agent->sendMessage({
         message: {
