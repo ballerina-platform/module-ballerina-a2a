@@ -18,4 +18,4 @@ graalvmCompatible = true
 groupId = "io.ballerina.lib"
 artifactId = "a2a-native"
 version = "0.8.0"
-path = "../native/build/libs/a2a-native-0.8.0-SNAPSHOT.jar"
+path = "../native/build/libs/a2a-native-0.8.0.jar"
