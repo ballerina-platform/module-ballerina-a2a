@@ -1,7 +1,7 @@
 [package]
 org = "ballerina"
 name = "a2a"
-version = "0.1.0"
+version = "0.8.0"
 distribution = "2201.14.0"
 license = ["Apache-2.0"]
 authors = ["Ballerina"]
@@ -17,5 +17,5 @@ graalvmCompatible = true
 [[platform.java25.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "a2a-native"
-version = "0.1.0-SNAPSHOT"
-path = "../native/build/libs/a2a-native-0.1.0-SNAPSHOT.jar"
+version = "0.8.0-SNAPSHOT"
+path = "../native/build/libs/a2a-native-0.8.0-SNAPSHOT.jar"
