@@ -408,6 +408,21 @@ Declaring the service on two listeners, `isolated service on publicListener, int
 `a2a:JsonRpcListener` serves the same agent over the JSON-RPC binding at `/rpc`. Where HTTP+JSON addresses an operation by verb and path, JSON-RPC addresses it by method name, so the service defines `remote` functions named for the methods: `sendMessage`, `sendStreamingMessage`, `subscribeToTask`, `getTask`, `listTasks`, `cancelTask`, the four push-notification functions and `getExtendedAgentCard`, with `getAgentCard` for a card built from configuration. Each takes its request record and may take an `a2a:Context`; the rules for what a service must define are the ones above.
 
 ```ballerina
+@a2a:ServiceConfig {
+    agentCard: {
+        name: "Weather Agent",
+        description: "Answers weather questions",
+        version: "1.0.0",
+        provider: {organization: "Example Co", url: "https://example.com"},
+        skills: [
+            {id: "forecast", name: "Forecast", description: "Multi-day forecasts", tags: ["weather"]}
+        ],
+        defaultInputModes: ["text"],
+        defaultOutputModes: ["text"],
+        capabilities: {},
+        supportedInterfaces: []
+    }
+}
 isolated service on new a2a:JsonRpcListener(9090) {
     private final a2a:DefaultHandler handler = new (new WeatherExecutor());
 
