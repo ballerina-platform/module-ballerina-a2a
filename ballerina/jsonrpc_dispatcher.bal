@@ -279,20 +279,25 @@ isolated function requestIdOf(json payload) returns json {
     return ();
 }
 
-# Accepts the protobuf JSON field names (`task_id`, `history_length`) next to
-# the lowerCamelCase ones, as the proto3 JSON mapping the specification uses
-# does: some clients send the original names. Only the top level of `params`
-# is renamed, so nothing inside a `metadata` map or a data part is touched.
+# Accepts the protobuf JSON field names (`message_id`, `history_length`) next
+# to the lowerCamelCase ones, as the proto3 JSON mapping the specification uses
+# does: some clients send the original names. Every level of `params` is
+# renamed except a `metadata` map and a data part's value, which are the
+# caller's own structure.
 #
-# + params - The request's `params`
-# + return - `params` with its top-level keys in lowerCamelCase
+# + params - The request's `params`, or a value inside it
+# + return - The same value with its field names in lowerCamelCase
 isolated function camelCaseKeys(json params) returns json {
+    if params is json[] {
+        return from json item in params select camelCaseKeys(item);
+    }
     if params !is map<json> {
         return params;
     }
     map<json> renamed = {};
     foreach [string, json] [key, value] in params.entries() {
-        renamed[camelCaseOf(key)] = value;
+        string name = camelCaseOf(key);
+        renamed[name] = name == "metadata" || name == "data" ? value : camelCaseKeys(value);
     }
     return renamed;
 }

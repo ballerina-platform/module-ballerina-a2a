@@ -45,10 +45,12 @@ function testARawPartIsBase64InAFetchedTaskOverJsonRpc() returns error? {
     json sent = check rpcCall(RAW_BYTES_TEST_PORT, "SendMessage", rpcSendParams("raw-rpc-1"));
     string taskId = check (check sent.result.task.id).ensureType();
 
-    json fetched = check rpcCall(RAW_BYTES_TEST_PORT, "GetTask", {task_id: taskId, id: taskId});
+    json fetched = check rpcCall(RAW_BYTES_TEST_PORT, "GetTask", {id: taskId, history_length: 0});
     json[] artifacts = <json[]>check fetched.result.artifacts;
     json[] parts = <json[]>check artifacts[0].parts;
     test:assertEquals(check parts[0].raw, "dGNr");
+    json|error history = fetched.result.history;
+    test:assertTrue(history is error || history == [], "history_length is read as historyLength");
 }
 
 // A caller's extra field is dropped on the way in, so a strict protobuf client

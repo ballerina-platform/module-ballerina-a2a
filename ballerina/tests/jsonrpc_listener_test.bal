@@ -199,6 +199,33 @@ isolated function rpcPost(map<json> body) returns http:Response|error {
     return rpcClient->post("/rpc", body, {"A2A-Version": "1.0"});
 }
 
+// The protobuf field names are accepted at every level of a message, while a
+// `metadata` map keeps the caller's own keys.
+@test:Config {}
+function testProtobufFieldNamesAreReadInsideAMessage() returns error? {
+    json params = {
+        message: {
+            message_id: "rpc-snake-1",
+            role: "ROLE_USER",
+            parts: [{text: "hello", media_type: "text/plain"}],
+            metadata: {snake_key: 1}
+        },
+        configuration: {accepted_output_modes: ["text"]}
+    };
+    json sent = check rpcCall(JSON_RPC_TEST_PORT, "SendMessage", params);
+    json[] history = <json[]>check sent.result.task.history;
+    test:assertEquals(check history[0].messageId, "rpc-snake-1");
+    json[] parts = <json[]>check history[0].parts;
+    test:assertEquals(check parts[0].mediaType, "text/plain");
+    test:assertEquals(check history[0].metadata.snake_key, 1, "metadata keys are the caller's");
+
+    json unhistoried = check rpcCall(JSON_RPC_TEST_PORT, "SendMessage",
+            {message: {message_id: "rpc-snake-2", role: "ROLE_USER", parts: [{text: "hi"}]},
+            configuration: {history_length: 0}});
+    json|error none = unhistoried.result.task.history;
+    test:assertTrue(none is error || none == [], "configuration.history_length is read as historyLength");
+}
+
 // JSON-RPC 2.0 allows a string, a number or null as an id; anything else is
 // an invalid request, refused before the method runs.
 @test:Config {}
