@@ -22,6 +22,7 @@
 // transport itself worked; only a refusal to authenticate is an HTTP status.
 
 import ballerina/http;
+import ballerina/log;
 
 # The JSON-RPC protocol version the envelope carries.
 const JSON_RPC_VERSION = "2.0";
@@ -73,11 +74,17 @@ isolated service class JsonRpcDispatcherService {
         if payload is error {
             return rpcErrorResponse((), JSON_RPC_PARSE_ERROR, "Parse error: " + payload.message());
         }
+        if payload is map<json> && payload["id"] !is string|int|float|decimal|() {
+            return rpcErrorResponse((), JSON_RPC_INVALID_REQUEST,
+                    "Invalid Request: `id` must be a string, a number or null");
+        }
         if payload !is map<json> || payload["jsonrpc"] != JSON_RPC_VERSION || payload["method"] !is string {
             return rpcErrorResponse(requestIdOf(payload), JSON_RPC_INVALID_REQUEST,
                     "Invalid Request: expected a JSON-RPC 2.0 request object with a string `method`");
         }
         json id = requestIdOf(payload);
+        // A request without an `id` is a notification, which JSON-RPC 2.0 never answers.
+        boolean notification = !payload.hasKey("id");
         string method = <string>payload["method"];
         json params = camelCaseKeys(payload["params"] ?: {});
 
@@ -86,7 +93,7 @@ isolated service class JsonRpcDispatcherService {
             gate = checkRequiredExtensions(self.card, req);
         }
         if gate is Error {
-            return rpcFailure(id, gate);
+            return notification ? noReply() : rpcFailure(id, gate);
         }
 
         // An empty tenant is the protobuf default a client serialises when it names none.
@@ -94,13 +101,22 @@ isolated service class JsonRpcDispatcherService {
             ? <string>params["tenant"] : ();
         string? declared = declaredTenant(self.card, JSONRPC);
         if tenant is string && (declared is () || declared != tenant) {
-            return rpcFailure(id, invalidParams(
+            return notification ? noReply() : rpcFailure(id, invalidParams(
                     string `request routed under tenant "${tenant}", which the agent does not serve`, "tenant"));
         }
         Context context = callerContextOf(req, caller, tenant);
         context.streamTiming = self.streamTiming;
 
         json|stream<StreamResponse, Error?>|Error result = self.route(method, params, context, req);
+        if notification {
+            if result is stream<StreamResponse, Error?> {
+                Error? closed = result.close();
+                if closed is Error {
+                    log:printDebug("could not close the stream of a notification", 'error = closed);
+                }
+            }
+            return noReply();
+        }
         if result is Error {
             return rpcFailure(id, result);
         }
@@ -256,7 +272,7 @@ isolated service class JsonRpcDispatcherService {
 isolated function requestIdOf(json payload) returns json {
     if payload is map<json> {
         json id = payload["id"];
-        if id is string|int|decimal {
+        if id is string|int|float|decimal {
             return id;
         }
     }
@@ -403,6 +419,15 @@ isolated function rpcErrorObject(Error err) returns json {
 isolated function rpcFailure(json id, Error err) returns http:Response {
     http:Response response = new;
     response.setJsonPayload({jsonrpc: JSON_RPC_VERSION, id, 'error: rpcErrorObject(err)});
+    return response;
+}
+
+# The answer to a notification: no JSON-RPC response at all.
+#
+# + return - An empty 204 response
+isolated function noReply() returns http:Response {
+    http:Response response = new;
+    response.statusCode = http:STATUS_NO_CONTENT;
     return response;
 }
 

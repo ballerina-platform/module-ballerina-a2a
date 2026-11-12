@@ -194,6 +194,40 @@ function testCancellingACompletedTaskIsNotCancelable() returns error? {
     test:assertEquals(check reply.'error.code, -32002);
 }
 
+isolated function rpcPost(map<json> body) returns http:Response|error {
+    http:Client rpcClient = check new (string `http://localhost:${JSON_RPC_TEST_PORT}`, httpVersion = http:HTTP_1_1);
+    return rpcClient->post("/rpc", body, {"A2A-Version": "1.0"});
+}
+
+// JSON-RPC 2.0 allows a string, a number or null as an id; anything else is
+// an invalid request, refused before the method runs.
+@test:Config {}
+function testAnIdThatIsNotAStringNumberOrNullIsAnInvalidRequest() returns error? {
+    foreach json id in [{}, [], true] {
+        http:Response response = check rpcPost({jsonrpc: "2.0", id, method: "ListTasks", params: {}});
+        json reply = check response.getJsonPayload();
+        test:assertEquals(check reply.'error.code, -32600, id.toJsonString());
+        test:assertEquals(check reply.id, (), "the id cannot be echoed, so it is null");
+    }
+}
+
+// A request without an id is a notification: the method runs, and nothing is
+// sent back, not even an error.
+@test:Config {}
+function testANotificationGetsNoReply() returns error? {
+    http:Response sent = check rpcPost({jsonrpc: "2.0", method: "SendMessage",
+            params: rpcSendParams("rpc-notified-1")});
+    test:assertEquals(sent.statusCode, 204);
+    test:assertTrue(sent.getTextPayload() is http:NoContentError, "a notification is not answered");
+
+    http:Response failed = check rpcPost({jsonrpc: "2.0", method: "GetTask", params: {id: "no-such-task"}});
+    test:assertEquals(failed.statusCode, 204, "nor is a failed one");
+
+    http:Response streamed = check rpcPost({jsonrpc: "2.0", method: "SendStreamingMessage",
+            params: rpcSendParams("rpc-notified-2")});
+    test:assertEquals(streamed.statusCode, 204, "nor is a streaming one");
+}
+
 @test:Config {}
 function testAnUnknownMethodIsMethodNotFound() returns error? {
     json reply = check rpcCall(JSON_RPC_TEST_PORT, "NoSuchMethod", {});
