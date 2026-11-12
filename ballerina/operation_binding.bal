@@ -53,6 +53,23 @@ final readonly & map<ResourceRoute> OPERATION_ROUTES = {
     "handleGetAgentCard": {accessor: "get", path: "agentCard"}
 };
 
+# The remote function each operation is served at when the service is attached
+# to a listener whose binding addresses operations by method name (JSON-RPC).
+final readonly & map<string> OPERATION_REMOTE_NAMES = {
+    "handleSendMessage": "sendMessage",
+    "handleSendStreamingMessage": "sendStreamingMessage",
+    "handleSubscribeToTask": "subscribeToTask",
+    "handleGetTask": "getTask",
+    "handleListTasks": "listTasks",
+    "handleCancelTask": "cancelTask",
+    "handleCreateTaskPushNotificationConfig": "createTaskPushNotificationConfig",
+    "handleGetTaskPushNotificationConfig": "getTaskPushNotificationConfig",
+    "handleListTaskPushNotificationConfigs": "listTaskPushNotificationConfigs",
+    "handleDeleteTaskPushNotificationConfig": "deleteTaskPushNotificationConfig",
+    "handleGetExtendedAgentCard": "getExtendedAgentCard",
+    "handleGetAgentCard": "getAgentCard"
+};
+
 # The error for an operation the service does not define.
 #
 # + operation - The operation's name
@@ -70,27 +87,40 @@ isolated function extendedAgentCardUnsupportedError() returns UnsupportedOperati
     return error UnsupportedOperationError(msg, message = msg, code = -32004);
 }
 
-# An attached service, with every A2A operation callable: the ones it defines
-# through its resources, and an error answer for the rest.
+# An attached service, with every A2A operation callable: the ones it defines,
+# and an error answer for the rest.
+#
+# A service defines an operation as a `resource` function (HTTP+JSON, where an
+# operation is a verb and a path) or as a `remote` function (JSON-RPC, where it
+# is a method name); the binding is built for one or the other.
 isolated class OperationBinding {
     private final Service agentService;
+    private final boolean byMethodName;
     // The names of the operations the service defines, in table order
     final readonly & string[] defined;
 
     # + agentService - The service being attached
-    isolated function init(Service agentService) {
+    # + byMethodName - Whether the operations are `remote` functions rather than resources
+    isolated function init(Service agentService, boolean byMethodName = false) {
         self.agentService = agentService;
-        string[] declared = describeResources(agentService).'map(entry => entry.endsWith(" +context")
-            ? entry.substring(0, entry.length() - " +context".length())
-            : entry);
+        self.byMethodName = byMethodName;
+        string[] declared = (byMethodName ? describeRemoteFunctions(agentService) : describeResources(agentService))
+            .'map(entry => entry.endsWith(" +context")
+                ? entry.substring(0, entry.length() - " +context".length())
+                : entry);
         string[] names = [];
-        foreach [string, ResourceRoute] [operation, route] in OPERATION_ROUTES.entries() {
-            if declared.indexOf(route.accessor + " " + route.path) is int {
+        foreach string operation in OPERATION_ROUTES.keys() {
+            if declared.indexOf(declarationFor(byMethodName, operation)) is int {
                 names.push(operation);
             }
         }
         self.defined = names.cloneReadOnly();
     }
+
+    # + operation - An operation's internal name such as `handleGetTask`
+    # + return - How the service declares it: `get tasks/*` for a resource,
+    #            `getTask` for a remote function
+    isolated function declarationOf(string operation) returns string => declarationFor(self.byMethodName, operation);
 
     # + operationName - An operation's internal name such as `handleGetTask`
     # + return - Whether the service defines it
@@ -177,9 +207,13 @@ isolated class OperationBinding {
         if !self.isDefined(operation) {
             return self.undefinedError(operation);
         }
-        ResourceRoute route = OPERATION_ROUTES.get(operation);
-        anydata|stream<StreamResponse, Error?>|error result =
-            invokeResource(self.agentService, route.accessor, route.path, pathParams, context, request);
+        anydata|stream<StreamResponse, Error?>|error result;
+        if self.byMethodName {
+            result = invokeRemoteFunction(self.agentService, OPERATION_REMOTE_NAMES.get(operation), context, request);
+        } else {
+            ResourceRoute route = OPERATION_ROUTES.get(operation);
+            result = invokeResource(self.agentService, route.accessor, route.path, pathParams, context, request);
+        }
         if result is Error {
             return result;
         }
@@ -205,4 +239,17 @@ isolated class OperationBinding {
         }
         return operationUndefinedError(operation);
     }
+}
+
+# How a service declares an operation.
+#
+# + byMethodName - Whether the binding addresses operations by method name
+# + operation - The operation's internal name
+# + return - `get tasks/*` for a resource, `getTask` for a remote function
+isolated function declarationFor(boolean byMethodName, string operation) returns string {
+    if byMethodName {
+        return OPERATION_REMOTE_NAMES.get(operation);
+    }
+    ResourceRoute route = OPERATION_ROUTES.get(operation);
+    return string `${route.accessor} ${route.path}`;
 }

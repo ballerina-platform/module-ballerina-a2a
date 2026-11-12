@@ -19,6 +19,8 @@ import ballerina/test;
 
 const int INPUT_MODES_STRICT_PORT = 19290;
 const int INPUT_MODES_LENIENT_PORT = 19291;
+const int INPUT_MODES_RPC_STRICT_PORT = 19292;
+const int INPUT_MODES_RPC_LENIENT_PORT = 19293;
 
 isolated class InputModesAgent {
     *AgentExecutor;
@@ -48,12 +50,16 @@ function inputModesCard(string[] defaultModes, string[]? skillModes = ()) return
 
 listener RestListener inputModesStrictListener = new (INPUT_MODES_STRICT_PORT, validateInputModes = true);
 listener RestListener inputModesLenientListener = new (INPUT_MODES_LENIENT_PORT);
+listener JsonRpcListener inputModesRpcStrictListener = new (INPUT_MODES_RPC_STRICT_PORT, validateInputModes = true);
+listener JsonRpcListener inputModesRpcLenientListener = new (INPUT_MODES_RPC_LENIENT_PORT);
 
 @test:BeforeSuite
 function startInputModesServers() returns error? {
     AgentCard card = inputModesCard(["text/plain"], ["application/json"]);
     check inputModesStrictListener.attach(new FullService(new DefaultHandler(new InputModesAgent()), card));
     check inputModesLenientListener.attach(new FullService(new DefaultHandler(new InputModesAgent()), card));
+    check inputModesRpcStrictListener.attach(new RpcService(new DefaultHandler(new InputModesAgent()), card));
+    check inputModesRpcLenientListener.attach(new RpcService(new DefaultHandler(new InputModesAgent()), card));
 }
 
 function sendWithMediaType(int port, string path, string? mediaType) returns http:Response|error {
@@ -145,4 +151,40 @@ function testTheFirstUnsupportedPartIsNamed() {
             messageWithMediaTypes("text/plain", (), "audio/ogg", "image/png"));
     test:assertTrue(rejected is ContentTypeNotSupportedError);
     test:assertTrue((<Error>rejected).message().includes("audio/ogg"));
+}
+
+function rpcSendWithMediaType(int port, string method, string? mediaType) returns json|error {
+    map<json> part = {text: "hello"};
+    if mediaType is string {
+        part["mediaType"] = mediaType;
+    }
+    return rpcCall(port, method, {message: {messageId: "modes-rpc", role: "ROLE_USER", parts: [part]}});
+}
+
+@test:Config {}
+function testAnUndeclaredMediaTypeIsRejectedOverJsonRpc() returns error? {
+    json reply = check rpcSendWithMediaType(INPUT_MODES_RPC_STRICT_PORT, "SendMessage", "image/png");
+    test:assertEquals(check reply.'error.code, -32005, reply.toJsonString());
+    test:assertTrue(reply.toJsonString().includes("image/png"), reply.toJsonString());
+}
+
+@test:Config {}
+function testAnUndeclaredMediaTypeIsRejectedOnTheStreamOverJsonRpc() returns error? {
+    json reply = check rpcSendWithMediaType(INPUT_MODES_RPC_STRICT_PORT, "SendStreamingMessage", "image/png");
+    test:assertEquals(check reply.'error.code, -32005, reply.toJsonString());
+}
+
+@test:Config {}
+function testDeclaredAndUnstatedMediaTypesAreAcceptedOverJsonRpc() returns error? {
+    foreach string? mediaType in ["text/plain; charset=UTF-8", "application/json", ()] {
+        json reply = check rpcSendWithMediaType(INPUT_MODES_RPC_STRICT_PORT, "SendMessage", mediaType);
+        test:assertTrue(reply.toJsonString().includes("result"), reply.toJsonString());
+        test:assertFalse(reply.toJsonString().includes("\"error\""), reply.toJsonString());
+    }
+}
+
+@test:Config {}
+function testValidationIsOffByDefaultOverJsonRpc() returns error? {
+    json reply = check rpcSendWithMediaType(INPUT_MODES_RPC_LENIENT_PORT, "SendMessage", "image/png");
+    test:assertFalse(reply.toJsonString().includes("\"error\""), reply.toJsonString());
 }

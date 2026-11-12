@@ -72,3 +72,129 @@ function testARetriedAttachMountsTheCardAfterTheCardServiceFailed() returns erro
     test:assertEquals(card.statusCode, 200, "the retried attach must mount the card");
     check shared.gracefulStop();
 }
+
+const int DETACH_RPC_TEST_PORT = 19311;
+const int DETACH_SHARED_TEST_PORT = 19312;
+
+@test:Config {}
+function testDetachTakesTheJsonRpcInterfaceOffTheCard() returns error? {
+    JsonRpcListener agentListener = check new (DETACH_RPC_TEST_PORT);
+    SendOnlyRpcService first = new;
+    check agentListener.attach(first);
+    check agentListener.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_RPC_TEST_PORT}`, cache = {enabled: false});
+
+    check agentListener.detach(first);
+    http:Response after = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(after.statusCode, 404, "a detached agent's card must no longer be served");
+
+    check agentListener.attach(new SendOnlyRpcService());
+    http:Response again = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(again.statusCode, 200, "the path is free for a replacement");
+    check agentListener.gracefulStop();
+}
+
+const int DETACH_OTHER_RPC_TEST_PORT = 19317;
+
+// Detaching a service that is not the attached one leaves the attached one served.
+@test:Config {}
+function testDetachingAnotherServiceKeepsTheAttachedJsonRpcOne() returns error? {
+    JsonRpcListener agentListener = check new (DETACH_OTHER_RPC_TEST_PORT);
+    check agentListener.attach(new SendOnlyRpcService());
+    check agentListener.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_OTHER_RPC_TEST_PORT}`,
+            cache = {enabled: false});
+
+    check agentListener.detach(new SendOnlyRpcService());
+    http:Response after = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(after.statusCode, 200, "the attached agent's card must still be served");
+    check agentListener.gracefulStop();
+}
+
+isolated function cardStatesOf(http:Listener httpListener) returns int {
+    lock {
+        int count = 0;
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, _, _] in sharedCardStates {
+            if existingListener === httpListener {
+                count += 1;
+            }
+        }
+        return count;
+    }
+}
+
+const int RELEASE_CARD_STATE_TEST_PORT = 19327;
+
+// The card state is kept per http:Listener, so it goes when the last binding
+// does: an application that attaches and detaches listeners must not keep
+// every one it ever used reachable.
+@test:Config {}
+function testTheSharedCardStateIsReleasedWithItsLastBinding() returns error? {
+    http:Listener shared = check new (RELEASE_CARD_STATE_TEST_PORT);
+    RestListener restListener = check new (shared);
+    JsonRpcListener rpcListener = check new (shared);
+    DefaultHandler handler = new (new CountingAgent());
+    FullService restService = new (handler, authTestCard);
+    RpcService rpcService = new (handler, authTestCard);
+    check restListener.attach(restService);
+    check rpcListener.attach(rpcService);
+    test:assertEquals(cardStatesOf(shared), 1, "both bindings share one card state");
+
+    check restListener.detach(restService);
+    test:assertEquals(cardStatesOf(shared), 1, "the JSON-RPC binding is still served");
+    check rpcListener.detach(rpcService);
+    test:assertEquals(cardStatesOf(shared), 0, "the last binding takes the card state with it");
+
+    check rpcListener.attach(new RpcService(handler, authTestCard));
+    test:assertEquals(cardStatesOf(shared), 1, "a later attach builds the state afresh");
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${RELEASE_CARD_STATE_TEST_PORT}`,
+            cache = {enabled: false});
+    http:Response card = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(card.statusCode, 200, "and serves the card again");
+    check shared.gracefulStop();
+}
+
+// Two listeners on one http:Listener share the card: detaching one leaves the
+// other's interface.
+@test:Config {}
+function testDetachingOneTransportKeepsTheOther() returns error? {
+    http:Listener shared = check new (DETACH_SHARED_TEST_PORT);
+    RestListener restListener = check new (shared);
+    JsonRpcListener rpcListener = check new (shared);
+    DefaultHandler handler = new (new CountingAgent());
+    check restListener.attach(new FullService(handler, authTestCard));
+    RpcService rpcService = new (handler, authTestCard);
+    check rpcListener.attach(rpcService);
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_SHARED_TEST_PORT}`, cache = {enabled: false});
+
+    check rpcListener.detach(rpcService);
+    json card = check cardClient->get("/.well-known/agent-card.json");
+    json[] interfaces = check (check card.supportedInterfaces).ensureType();
+    test:assertEquals(interfaces.length(), 1, "only the HTTP+JSON interface is left");
+    test:assertEquals(check interfaces[0].protocolBinding, "HTTP+JSON");
+    check shared.gracefulStop();
+}
+
+const int RETRY_RPC_ATTACH_TEST_PORT = 19314;
+
+@test:Config {}
+function testARetriedJsonRpcAttachMountsTheCardAfterTheCardServiceFailed() returns error? {
+    http:Listener shared = check new (RETRY_RPC_ATTACH_TEST_PORT);
+    RootBlocker blocker = new;
+    check shared.attach(blocker);
+    JsonRpcListener agentListener = check new (shared);
+    SendOnlyRpcService agent = new;
+
+    error? first = agentListener.attach(agent);
+    test:assertTrue(first is error, "the card service cannot mount while / is taken");
+
+    check shared.detach(blocker);
+    check agentListener.attach(agent);
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${RETRY_RPC_ATTACH_TEST_PORT}`, cache = {enabled: false});
+    http:Response card = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(card.statusCode, 200, "the retried attach must mount the card");
+    check shared.gracefulStop();
+}

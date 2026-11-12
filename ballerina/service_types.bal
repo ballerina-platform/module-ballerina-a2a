@@ -17,10 +17,11 @@
 
 // What a developer implements to serve an A2A agent.
 //
-// An agent is an `a2a:Service` attached to an `a2a:RestListener`. The service
-// carries the agent card and defines the A2A operations it supports as
-// `resource` functions, one per route of the HTTP+JSON binding; the listener
-// reads which ones it defines when the service is attached, and answers
+// An agent is an `a2a:Service` attached to an `a2a:RestListener` or an
+// `a2a:JsonRpcListener`. The service carries the agent card and defines the A2A
+// operations it supports: `resource` functions, one per route of the HTTP+JSON
+// binding, or `remote` functions, one per JSON-RPC method. The listener reads
+// which ones it defines when the service is attached, and answers
 // `UnsupportedOperationError` for the others. Every operation can be written
 // by hand or delegated to an `a2a:DefaultHandler`, which runs the task
 // lifecycle around an `a2a:AgentExecutor`.
@@ -28,7 +29,8 @@
 # An A2A agent: a service that defines some of the A2A operations.
 #
 # The type itself requires nothing. Which operations a service supports is
-# decided by the `resource` functions it defines:
+# decided by the functions it defines. On an `a2a:RestListener` they are
+# `resource` functions:
 #
 # | Operation | Resource |
 # |---|---|
@@ -56,8 +58,15 @@
 # push-notification operations are each all-or-nothing, because the agent card
 # advertises them as one capability.
 #
+# On an `a2a:JsonRpcListener` they are `remote` functions named for the
+# JSON-RPC methods: `sendMessage`, `sendStreamingMessage`, `getTask`,
+# `listTasks`, `cancelTask`, `subscribeToTask`, the four push-notification
+# functions (`createTaskPushNotificationConfig`, ...), `getExtendedAgentCard`
+# and `getAgentCard`, each taking the request record and an optional
+# `a2a:Context`. The same rules apply.
+#
 # The agent card comes from `@a2a:ServiceConfig` or from an optional
-# `get agentCard` resource, not both.
+# `get agentCard` resource (`getAgentCard` over JSON-RPC), not both.
 public type Service distinct isolated service object {
 };
 
@@ -68,7 +77,8 @@ public type ServiceConfiguration record {|
     # attached at, so pass `capabilities: {}` and `supportedInterfaces: []`.
     #
     # Annotation values must be constants. To build the card from
-    # configuration, define a `get agentCard` resource instead and omit the annotation.
+    # configuration, define a `get agentCard` resource (`getAgentCard` over
+    # JSON-RPC) instead and omit the annotation.
     AgentCard agentCard;
 |};
 

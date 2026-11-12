@@ -113,7 +113,7 @@ function testAttachRefusesAServiceWithoutSendMessage() returns error? {
     RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new GetTaskOnlyService(attachRulesHandler(), authTestCard), "rest");
     test:assertTrue(rejected is InternalError);
-    test:assertTrue((<error>rejected).message().includes("message\\:send"), (<error>rejected).message());
+    test:assertTrue((<error>rejected).message().includes("message:send"), (<error>rejected).message());
 }
 
 @test:Config {}
