@@ -418,7 +418,7 @@ isolated service on new a2a:JsonRpcListener(9090) {
 }
 ```
 
-A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {...}}` and the `A2A-Version: 1.0` header. A failure is a JSON-RPC `error` object on a 200, carrying the specification's code (`-32001` task not found, `-32004` unsupported operation, and so on); streaming methods answer with Server-Sent Events whose every `data` is a complete JSON-RPC response. To serve one agent over both bindings, build both listeners on one `http:Listener`: the card at `/.well-known/agent-card.json` then lists both interfaces, and both services must declare the same card and define the same capabilities.
+A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {...}}` and the `A2A-Version: 1.0` header. A failure is a JSON-RPC `error` object on a 200, carrying the specification's code (`-32001` task not found, `-32004` unsupported operation, and so on); streaming methods answer with Server-Sent Events whose every `data` is a complete JSON-RPC response. `JsonRpcListenerConfiguration` takes the same fields as `RestListenerConfiguration` (`auth`, TLS, `publicUrl`, stream timing), so the sections below apply to both listeners. To serve one agent over both bindings, build both listeners on one `http:Listener`: the card at `/.well-known/agent-card.json` then lists both interfaces, and both services must declare the same card and define the same capabilities.
 
 ### Bringing your own handler
 
