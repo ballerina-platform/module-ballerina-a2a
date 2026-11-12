@@ -173,8 +173,7 @@ isolated class ServedCards {
 # + protocolBinding - The binding of the one interface the card starts with
 # + return - The card to serve
 isolated function deriveServedCard(AgentCard supplied, boolean extendedCardConfigured,
-        boolean streamingCapability, boolean pushNotificationsCapability,
-        string protocolBinding = HTTP_JSON) returns AgentCard {
+        boolean streamingCapability, boolean pushNotificationsCapability, string protocolBinding) returns AgentCard {
     // A mutable top level even when `supplied` is readonly:
     // `clone()` alone returns an immutable value unchanged.
     AgentCard card = {...supplied.clone()};
