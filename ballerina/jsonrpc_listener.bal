@@ -69,6 +69,7 @@ public isolated class JsonRpcListener {
     private final string interfaceScheme;
     private final string? publicUrl;
     private final boolean validateInputModes;
+    private Service? agentService = ();
     private JsonRpcDispatcherService? dispatcher = ();
 
     # Creates a JsonRpcListener.
@@ -146,6 +147,7 @@ public isolated class JsonRpcListener {
         }
         check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH);
         lock {
+            self.agentService = a2aService;
             self.dispatcher = dispatcherService;
         }
         error? result = self.httpListener.attach(dispatcherService, JSON_RPC_MOUNT_PATH);
@@ -157,15 +159,18 @@ public isolated class JsonRpcListener {
                 operations = binding.defined.toString());
     }
 
-    # Detaches the attached service.
+    # Detaches the attached service; any other service is left alone.
     #
     # + a2aService - The service to detach
     # + return - An `a2a:Error` if detachment fails
     public isolated function detach(Service a2aService) returns error? {
-        JsonRpcDispatcherService? dispatcherService;
+        JsonRpcDispatcherService? dispatcherService = ();
         lock {
-            dispatcherService = self.dispatcher;
-            self.dispatcher = ();
+            if self.agentService === a2aService {
+                dispatcherService = self.dispatcher;
+                self.agentService = ();
+                self.dispatcher = ();
+            }
         }
         if dispatcherService is JsonRpcDispatcherService {
             removeCardBinding(self.httpListener, JSON_RPC_MOUNT_PATH);
@@ -184,6 +189,7 @@ public isolated class JsonRpcListener {
     private isolated function forget(CardRegistry registry) {
         registry.remove(JSON_RPC_MOUNT_PATH);
         lock {
+            self.agentService = ();
             self.dispatcher = ();
         }
     }

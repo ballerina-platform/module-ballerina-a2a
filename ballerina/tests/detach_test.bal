@@ -94,6 +94,23 @@ function testDetachTakesTheJsonRpcInterfaceOffTheCard() returns error? {
     check agentListener.gracefulStop();
 }
 
+const int DETACH_OTHER_RPC_TEST_PORT = 19317;
+
+// Detaching a service that is not the attached one leaves the attached one served.
+@test:Config {}
+function testDetachingAnotherServiceKeepsTheAttachedJsonRpcOne() returns error? {
+    JsonRpcListener agentListener = check new (DETACH_OTHER_RPC_TEST_PORT);
+    check agentListener.attach(new SendOnlyRpcService());
+    check agentListener.'start();
+    http:Client cardClient = check new (string `http://localhost:${DETACH_OTHER_RPC_TEST_PORT}`,
+            cache = {enabled: false});
+
+    check agentListener.detach(new SendOnlyRpcService());
+    http:Response after = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(after.statusCode, 200, "the attached agent's card must still be served");
+    check agentListener.gracefulStop();
+}
+
 // Two listeners on one http:Listener share the card: detaching one leaves the
 // other's interface.
 @test:Config {}
