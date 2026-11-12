@@ -111,6 +111,50 @@ function testDetachingAnotherServiceKeepsTheAttachedJsonRpcOne() returns error? 
     check agentListener.gracefulStop();
 }
 
+isolated function cardStatesOf(http:Listener httpListener) returns int {
+    lock {
+        int count = 0;
+        foreach [http:Listener, CardRegistry, CardService] [existingListener, _, _] in sharedCardStates {
+            if existingListener === httpListener {
+                count += 1;
+            }
+        }
+        return count;
+    }
+}
+
+const int RELEASE_CARD_STATE_TEST_PORT = 19327;
+
+// The card state is kept per http:Listener, so it goes when the last binding
+// does: an application that attaches and detaches listeners must not keep
+// every one it ever used reachable.
+@test:Config {}
+function testTheSharedCardStateIsReleasedWithItsLastBinding() returns error? {
+    http:Listener shared = check new (RELEASE_CARD_STATE_TEST_PORT);
+    RestListener restListener = check new (shared);
+    JsonRpcListener rpcListener = check new (shared);
+    DefaultHandler handler = new (new CountingAgent());
+    FullService restService = new (handler, authTestCard);
+    RpcService rpcService = new (handler, authTestCard);
+    check restListener.attach(restService);
+    check rpcListener.attach(rpcService);
+    test:assertEquals(cardStatesOf(shared), 1, "both bindings share one card state");
+
+    check restListener.detach(restService);
+    test:assertEquals(cardStatesOf(shared), 1, "the JSON-RPC binding is still served");
+    check rpcListener.detach(rpcService);
+    test:assertEquals(cardStatesOf(shared), 0, "the last binding takes the card state with it");
+
+    check rpcListener.attach(new RpcService(handler, authTestCard));
+    test:assertEquals(cardStatesOf(shared), 1, "a later attach builds the state afresh");
+    check shared.'start();
+    http:Client cardClient = check new (string `http://localhost:${RELEASE_CARD_STATE_TEST_PORT}`,
+            cache = {enabled: false});
+    http:Response card = check cardClient->get("/.well-known/agent-card.json");
+    test:assertEquals(card.statusCode, 200, "and serves the card again");
+    check shared.gracefulStop();
+}
+
 // Two listeners on one http:Listener share the card: detaching one leaves the
 // other's interface.
 @test:Config {}

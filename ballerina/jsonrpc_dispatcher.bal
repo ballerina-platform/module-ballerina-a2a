@@ -83,6 +83,11 @@ isolated service class JsonRpcDispatcherService {
                     "Invalid Request: expected a JSON-RPC 2.0 request object with a string `method`");
         }
         json id = requestIdOf(payload);
+        // `params` is structured when present; an omitted one is the empty object.
+        if payload.hasKey("params") && payload["params"] !is map<json>|json[] {
+            return rpcErrorResponse(id, JSON_RPC_INVALID_REQUEST,
+                    "Invalid Request: `params` must be an object or an array when present");
+        }
         // A request without an `id` is a notification, which JSON-RPC 2.0 never answers.
         boolean notification = !payload.hasKey("id");
         string method = <string>payload["method"];

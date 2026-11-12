@@ -63,5 +63,6 @@ function testAnUnknownFieldInAMessageSentOverJsonRpcIsNotServedBack() returns er
     string text = sent.toJsonString();
     test:assertFalse(text.includes("tckUnknownField"), text);
     test:assertFalse(text.includes("unknownTop"), text);
+    test:assertFalse(text.includes("\"extra\""), text);
     test:assertTrue(text.includes("unknown-field-1"), text);
 }

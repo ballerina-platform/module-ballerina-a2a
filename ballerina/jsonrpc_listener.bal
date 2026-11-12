@@ -141,18 +141,15 @@ public isolated class JsonRpcListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, self.validateInputModes);
-        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme);
-        if registry is error {
-            return wrapTransportError(registry);
-        }
-        check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH, self.authConfig, self.publicUrl);
+        check addCardBinding(self.httpListener, self.interfaceScheme, served, JSONRPC, JSON_RPC_MOUNT_PATH,
+                self.authConfig, self.publicUrl);
         lock {
             self.agentService = a2aService;
             self.dispatcher = dispatcherService;
         }
         error? result = self.httpListener.attach(dispatcherService, JSON_RPC_MOUNT_PATH);
         if result is error {
-            self.forget(registry);
+            self.forget();
             return wrapTransportError(result);
         }
         log:printInfo("A2A service attached", path = "/" + JSON_RPC_MOUNT_PATH,
@@ -184,10 +181,8 @@ public isolated class JsonRpcListener {
     # Undoes the bookkeeping of an attach that failed partway, so the card does
     # not advertise an interface that serves nothing and `/rpc` can be used
     # again.
-    #
-    # + registry - The card registry the binding was added to
-    private isolated function forget(CardRegistry registry) {
-        registry.remove(JSON_RPC_MOUNT_PATH);
+    private isolated function forget() {
+        removeCardBinding(self.httpListener, JSON_RPC_MOUNT_PATH);
         lock {
             self.agentService = ();
             self.dispatcher = ();

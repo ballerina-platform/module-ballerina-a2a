@@ -174,9 +174,10 @@ function testGetTaskAndListTasksOverJsonRpc() returns error? {
     json fetched = check rpcCall(JSON_RPC_TEST_PORT, "GetTask", {id: taskId});
     test:assertEquals(check fetched.result.id, taskId);
 
-    json listed = check rpcCall(JSON_RPC_TEST_PORT, "ListTasks", {});
+    json listed = check rpcCall(JSON_RPC_TEST_PORT, "ListTasks", {contextId: check sent.result.task.contextId});
     json[] tasks = <json[]>check listed.result.tasks;
-    test:assertTrue(tasks.length() >= 1);
+    test:assertEquals(tasks.length(), 1);
+    test:assertEquals(check tasks[0].id, taskId, "ListTasks serves the task SendMessage created");
 }
 
 @test:Config {}
@@ -236,6 +237,27 @@ function testAnIdThatIsNotAStringNumberOrNullIsAnInvalidRequest() returns error?
         test:assertEquals(check reply.'error.code, -32600, id.toJsonString());
         test:assertEquals(check reply.id, (), "the id cannot be echoed, so it is null");
     }
+}
+
+// JSON-RPC 2.0 requires an included `params` to be structured. An omitted one
+// is the empty object; null or a primitive is an invalid request, not an
+// empty one.
+@test:Config {}
+function testParamsThatAreNotStructuredAreAnInvalidRequest() returns error? {
+    foreach json params in [(), 5, "text", true] {
+        http:Response response = check rpcPost({jsonrpc: "2.0", id: "p-1", method: "ListTasks", params});
+        json reply = check response.getJsonPayload();
+        test:assertEquals(check reply.'error.code, -32600, params.toJsonString());
+        test:assertEquals(check reply.id, "p-1");
+    }
+}
+
+@test:Config {}
+function testOmittedParamsAreTheEmptyObject() returns error? {
+    http:Response response = check rpcPost({jsonrpc: "2.0", id: "p-2", method: "ListTasks"});
+    json reply = check response.getJsonPayload();
+    test:assertFalse((<map<json>>reply).hasKey("error"), reply.toJsonString());
+    test:assertTrue(reply.result is map<json>, "an omitted params member is an empty one");
 }
 
 // A request without an id is a notification: the method runs, and nothing is
@@ -439,6 +461,25 @@ function testJsonRpcAuthErrorsNameTheJsonRpcConfiguration() returns error? {
         string message = unreachable.message();
         test:assertTrue(message.startsWith("JsonRpcListenerConfiguration.auth[0] (ldapUserStoreConfig)"), message);
     }
+}
+
+@test:Config {}
+function testAJsonRpcListenerRefusesAnEmptyAuthList() {
+    JsonRpcListener|Error created = new (19316, auth = []);
+    test:assertTrue(created is InternalError, "an empty auth list is a mistake, not no authentication");
+    test:assertTrue((<error>created).message().startsWith("JsonRpcListenerConfiguration.auth must contain"),
+            (<error>created).message());
+}
+
+@test:Config {}
+function testAJsonRpcListenerStopsImmediately() returns error? {
+    JsonRpcListener agentListener = check new (19322);
+    check agentListener.attach(new SendOnlyRpcService());
+    check agentListener.'start();
+    check agentListener.immediateStop();
+    http:Client cardClient = check new ("http://localhost:19322", retryConfig = ());
+    http:Response|error after = cardClient->get("/.well-known/agent-card.json");
+    test:assertTrue(after is error, "a stopped listener accepts no connection");
 }
 
 // The extended card is for authenticated callers, so a listener without `auth`
