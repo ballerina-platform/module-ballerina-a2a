@@ -266,6 +266,37 @@ function testARestAndAJsonRpcListenerOnOneHttpListenerShareACard() returns error
     test:assertEquals(viaRest.statusCode, 200);
 }
 
+// Listeners on one http:Listener publish one card, so they must authenticate
+// callers alike: a card that declares its own security would otherwise claim
+// authentication for a binding that does none.
+@test:Config {}
+function testListenersSharingACardMustShareTheirAuth() returns error? {
+    http:Listener shared = check new (19318);
+    RestListener restListener = check new (shared, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
+    JsonRpcListener rpcListener = check new (shared);
+    AgentCard securedCard = {...rpcTestCard};
+    securedCard.securitySchemes = {"bearer": <HttpAuthSecurityScheme>{scheme: "Bearer"}};
+    securedCard.securityRequirements = [{"bearer": []}];
+    DefaultHandler handler = new (new CountingAgent());
+    check restListener.attach(new FullService(handler, securedCard));
+    error? rejected = rpcListener.attach(new RpcService(handler, securedCard));
+    test:assertTrue(rejected is InternalError, "a binding without the other's auth must not share its card");
+    test:assertTrue((<error>rejected).message().includes("the same `auth`"), (<error>rejected).message());
+}
+
+// The shared card lists every binding under one public URL.
+@test:Config {}
+function testListenersSharingACardMustShareTheirPublicUrl() returns error? {
+    http:Listener shared = check new (19319);
+    RestListener restListener = check new (shared, publicUrl = "https://agents.example.com");
+    JsonRpcListener rpcListener = check new (shared, publicUrl = "https://other.example.com");
+    DefaultHandler handler = new (new CountingAgent());
+    check restListener.attach(new FullService(handler, rpcTestCard));
+    error? rejected = rpcListener.attach(new RpcService(handler, rpcTestCard));
+    test:assertTrue(rejected is InternalError, "two public URLs cannot share one card");
+    test:assertTrue((<error>rejected).message().includes("the same `publicUrl`"), (<error>rejected).message());
+}
+
 @test:Config {}
 function testAJsonRpcListenerServesOnlyItsOwnPath() returns error? {
     JsonRpcListener other = check new (19282);

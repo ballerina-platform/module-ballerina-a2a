@@ -23,24 +23,43 @@ import ballerina/http;
 # The card of the agent a listener serves, and the bindings it is served over.
 isolated class CardRegistry {
     private AgentCard? card = ();
+    private (http:ListenerAuthConfig[] & readonly)? auth = ();
+    private string? publicUrl = ();
     private string[][] bindings = [];
 
     # Records a service's card and binding.
     #
-    # A listener serves one agent: a second service must carry the same card.
+    # The bindings on one `http:Listener` publish one card, so a second binding
+    # must carry the same card, authenticate callers the same way and be
+    # reached at the same public URL.
     #
     # + served - The derived card the service will be served with
     # + protocolBinding - The binding, e.g. `HTTP+JSON`
     # + mountPath - The path it is mounted at
-    # + return - An `a2a:InternalError` if the card differs or the path is taken
-    isolated function add(AgentCard served, string protocolBinding, string mountPath) returns Error? {
+    # + auth - The listener's `auth`, if any
+    # + publicUrl - The listener's public URL, if any
+    # + return - An `a2a:InternalError` if the card, `auth` or `publicUrl`
+    #            differs, or the path is taken
+    isolated function add(AgentCard served, string protocolBinding, string mountPath,
+            (http:ListenerAuthConfig[] & readonly)? auth, string? publicUrl) returns Error? {
         json servedWithoutInterfaces = withoutInterfaces(served).toJson();
         lock {
             AgentCard? existing = self.card;
-            if existing is AgentCard && withoutInterfaces(existing).toJson() != servedWithoutInterfaces {
-                string msg = "every a2a:Service attached to one http:Listener must declare the same agent card and define the same "
-                    + "capabilities (streaming, push notifications, extended card)";
-                return error InternalError(msg, message = msg);
+            if existing is AgentCard {
+                string? mismatch = ();
+                if withoutInterfaces(existing).toJson() != servedWithoutInterfaces {
+                    mismatch = "declare the same agent card and define the same "
+                        + "capabilities (streaming, push notifications, extended card)";
+                } else if auth != self.auth {
+                    mismatch = "be on listeners that configure the same `auth`";
+                } else if publicUrl != self.publicUrl {
+                    mismatch = "be on listeners that set the same `publicUrl`";
+                }
+                if mismatch is string {
+                    string msg = "every a2a:Service attached to one http:Listener must " + mismatch
+                        + ", since they publish one agent card";
+                    return error InternalError(msg, message = msg);
+                }
             }
             foreach string[] binding in self.bindings {
                 if binding[1] == mountPath {
@@ -49,6 +68,8 @@ isolated class CardRegistry {
                 }
             }
             self.card = served.cloneReadOnly();
+            self.auth = auth;
+            self.publicUrl = publicUrl;
             self.bindings.push([protocolBinding, mountPath]);
         }
     }
@@ -61,18 +82,22 @@ isolated class CardRegistry {
             self.bindings = from string[] binding in self.bindings where binding[1] != mountPath select binding;
             if self.bindings.length() == 0 {
                 self.card = ();
+                self.auth = ();
+                self.publicUrl = ();
             }
         }
     }
 
-    # + baseUrl - The address the listener is reached at, without a trailing slash
+    # + interfaceScheme - The scheme the listener serves
+    # + host - The `Host` the request named, used when no public URL is set
     # + return - The public card with one interface per attached binding, or `()` before any attach
-    isolated function served(string baseUrl) returns AgentCard? {
+    isolated function served(string interfaceScheme, string host) returns AgentCard? {
         lock {
             AgentCard? card = self.card;
             if card is () {
                 return;
             }
+            string baseUrl = interfaceUrlFor(self.publicUrl, interfaceScheme, host);
             AgentCard copy = {...card.clone()};
             AgentInterface[] interfaces = [];
             foreach string[] binding in self.bindings {
@@ -112,10 +137,8 @@ isolated [http:Listener, CardRegistry, CardService][] sharedCardStates = [];
 #
 # + httpListener - The listener the cards are served on
 # + interfaceScheme - The scheme the listener serves
-# + publicUrl - The configured public URL, if any
 # + return - The registry, or the error mounting the card service
-isolated function cardRegistryFor(http:Listener httpListener, string interfaceScheme, string? publicUrl)
-        returns CardRegistry|error {
+isolated function cardRegistryFor(http:Listener httpListener, string interfaceScheme) returns CardRegistry|error {
     lock {
         foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
             if existingListener === httpListener {
@@ -123,7 +146,7 @@ isolated function cardRegistryFor(http:Listener httpListener, string interfaceSc
             }
         }
         CardRegistry registry = new;
-        CardService cardService = new (registry, interfaceScheme, publicUrl);
+        CardService cardService = new (registry, interfaceScheme);
         error? mounted = httpListener.attach(cardService);
         if mounted is error {
             return mounted;
@@ -161,18 +184,15 @@ isolated service class CardService {
 
     private final CardRegistry registry;
     private final string interfaceScheme;
-    private final string? publicUrl;
 
-    isolated function init(CardRegistry registry, string interfaceScheme, string? publicUrl) {
+    isolated function init(CardRegistry registry, string interfaceScheme) {
         self.registry = registry;
         self.interfaceScheme = interfaceScheme;
-        self.publicUrl = publicUrl;
     }
 
     isolated resource function get \.well\-known/agent\-card\.json(http:Request req) returns http:Response|http:NotFound {
         string|http:HeaderNotFoundError host = req.getHeader("Host");
-        string baseUrl = interfaceUrlFor(self.publicUrl, self.interfaceScheme, host is string ? host : "");
-        AgentCard? card = self.registry.served(baseUrl);
+        AgentCard? card = self.registry.served(self.interfaceScheme, host is string ? host : "");
         if card is () {
             return http:NOT_FOUND;
         }

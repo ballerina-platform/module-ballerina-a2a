@@ -141,11 +141,11 @@ public isolated class JsonRpcListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, self.validateInputModes);
-        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme);
         if registry is error {
             return wrapTransportError(registry);
         }
-        check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH);
+        check registry.add(served, JSONRPC, JSON_RPC_MOUNT_PATH, self.authConfig, self.publicUrl);
         lock {
             self.agentService = a2aService;
             self.dispatcher = dispatcherService;

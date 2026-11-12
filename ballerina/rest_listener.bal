@@ -250,11 +250,11 @@ public isolated class RestListener {
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
-        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme, self.publicUrl);
+        CardRegistry|error registry = cardRegistryFor(self.httpListener, self.interfaceScheme);
         if registry is error {
             return wrapTransportError(registry);
         }
-        check registry.add(served, HTTP_JSON, mountPath);
+        check registry.add(served, HTTP_JSON, mountPath, self.authConfig, self.publicUrl);
         lock {
             self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
         }
