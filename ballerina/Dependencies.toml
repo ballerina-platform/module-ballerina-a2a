@@ -13,6 +13,7 @@ name = "a2a"
 version = "0.8.0"
 dependencies = [
 	{org = "ballerina", name = "auth"},
+	{org = "ballerina", name = "crypto"},
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "jwt"},
@@ -72,6 +73,9 @@ version = "2.13.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "time"}
+]
+modules = [
+	{org = "ballerina", packageName = "crypto", moduleName = "crypto"}
 ]
 
 [[package]]

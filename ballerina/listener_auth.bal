@@ -76,16 +76,18 @@ isolated class AuthEntry {
     // isolated object can.
     private final AuthEntry? next;
 
-    # + configs - `RestListenerConfiguration.auth`
+    # + configName - The listener configuration's type name, for error messages
+    # + configs - That configuration's `auth`
     # + index - The position of the entry this one is built from; it builds
     #           the rest of the chain behind it
     # + return - An `a2a:InternalError` naming the entry, if nothing in it
     #            names its provider or its handler could not be initialised
-    isolated function init(http:ListenerAuthConfig[] & readonly configs, int index = 0) returns Error? {
+    isolated function init(string configName, http:ListenerAuthConfig[] & readonly configs, int index = 0)
+            returns Error? {
         http:ListenerAuthConfig config = configs[index];
         string[]? authority = authorityOf(config);
         if authority is () {
-            string msg = string `RestListenerConfiguration.auth[${index}] (jwtValidatorConfig) must set issuer: `
+            string msg = string `${configName}.auth[${index}] (jwtValidatorConfig) must set issuer: `
                 + "it verifies tokens with a secret or an in-memory key, which does not name its provider";
             return error InternalError(msg, message = msg);
         }
@@ -103,35 +105,35 @@ isolated class AuthEntry {
         if config is http:JwtValidatorConfigWithScopes {
             http:ListenerJwtAuthHandler|error created = trap new (config.jwtValidatorConfig.cloneReadOnly());
             if created is error {
-                return authEntryFailure(index, "jwtValidatorConfig", created);
+                return authEntryFailure(configName, index, "jwtValidatorConfig", created);
             }
             jwtHandler = created;
             scheme = AUTH_SCHEME_BEARER;
         } else if config is http:OAuth2IntrospectionConfigWithScopes {
             http:ListenerOAuth2Handler|error created = trap new (config.oauth2IntrospectionConfig.cloneReadOnly());
             if created is error {
-                return authEntryFailure(index, "oauth2IntrospectionConfig", created);
+                return authEntryFailure(configName, index, "oauth2IntrospectionConfig", created);
             }
             oauth2Handler = created;
             scheme = AUTH_SCHEME_BEARER;
         } else if config is http:FileUserStoreConfigWithScopes {
             http:ListenerFileUserStoreBasicAuthHandler|error created = trap new (config.fileUserStoreConfig.cloneReadOnly());
             if created is error {
-                return authEntryFailure(index, "fileUserStoreConfig", created);
+                return authEntryFailure(configName, index, "fileUserStoreConfig", created);
             }
             fileHandler = created;
             scheme = AUTH_SCHEME_BASIC;
         } else {
             http:ListenerLdapUserStoreBasicAuthHandler|error created = trap new (config.ldapUserStoreConfig.cloneReadOnly());
             if created is error {
-                return authEntryFailure(index, "ldapUserStoreConfig", created);
+                return authEntryFailure(configName, index, "ldapUserStoreConfig", created);
             }
             ldapHandler = created;
             scheme = AUTH_SCHEME_BASIC;
         }
         AuthEntry? next = ();
         if index + 1 < configs.length() {
-            next = check new AuthEntry(configs, index + 1);
+            next = check new AuthEntry(configName, configs, index + 1);
         }
         self.next = next;
         self.scheme = scheme;
@@ -351,9 +353,10 @@ isolated class ListenerAuthenticator {
     private final AuthEntry first;
     private final string[] & readonly challenges;
 
-    # + configs - `RestListenerConfiguration.auth`, non-empty
+    # + configName - The listener configuration's type name, for error messages
+    # + configs - That configuration's `auth`, non-empty
     # + return - An `a2a:InternalError` if an entry's handler could not be initialised
-    isolated function init(http:ListenerAuthConfig[] & readonly configs) returns Error? {
+    isolated function init(string configName, http:ListenerAuthConfig[] & readonly configs) returns Error? {
         string[] challenges = [];
         foreach http:ListenerAuthConfig config in configs {
             string challenge = config is http:JwtValidatorConfigWithScopes|http:OAuth2IntrospectionConfigWithScopes
@@ -363,7 +366,7 @@ isolated class ListenerAuthenticator {
             }
         }
         self.challenges = challenges.cloneReadOnly();
-        self.first = check new (configs);
+        self.first = check new (configName, configs);
     }
 
     # The `WWW-Authenticate` challenges to send with a 401, one per accepted
@@ -429,7 +432,7 @@ const DERIVED_BASIC_SCHEME = "basicAuth";
 # becomes its own requirement (an OR), carrying that entry's scopes.
 #
 # + card - The card the developer supplied
-# + auth - `RestListenerConfiguration.auth`
+# + auth - The listener configuration's `auth`
 # + return - The card, with `securitySchemes` and `securityRequirements` derived
 #            when they were not declared and `auth` is set; otherwise unchanged
 isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]? auth) returns AgentCard {
@@ -476,11 +479,12 @@ isolated function withDerivedSecurity(AgentCard card, http:ListenerAuthConfig[]?
 
 # The error for an `auth` entry whose handler could not be initialised.
 #
-# + index - The entry's position in `RestListenerConfiguration.auth`
+# + configName - The listener configuration's type name
+# + index - The entry's position in that configuration's `auth`
 # + kind - The field of the entry that configures its handler
 # + cause - What the handler's constructor panicked or returned with
 # + return - An `a2a:InternalError` naming the entry, with the cause's message
-isolated function authEntryFailure(int index, string kind, error cause) returns Error {
-    string msg = string `RestListenerConfiguration.auth[${index}] (${kind}) could not be initialised: ${cause.message()}`;
+isolated function authEntryFailure(string configName, int index, string kind, error cause) returns Error {
+    string msg = string `${configName}.auth[${index}] (${kind}) could not be initialised: ${cause.message()}`;
     return error InternalError(msg, message = msg);
 }

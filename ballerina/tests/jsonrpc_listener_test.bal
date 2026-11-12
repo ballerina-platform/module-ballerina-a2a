@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/crypto;
 import ballerina/http;
 import ballerina/test;
 
@@ -325,6 +326,26 @@ isolated service class RpcExtendedCardService {
     isolated remote function getExtendedAgentCard(Context context, GetExtendedAgentCardRequest request)
             returns AgentCard|Error {
         return self.handler.handleGetExtendedAgentCard(context, request);
+    }
+}
+
+// An `auth` entry that cannot be set up is named by this listener's configuration.
+@test:Config {}
+function testJsonRpcAuthErrorsNameTheJsonRpcConfiguration() returns error? {
+    crypto:PublicKey inMemoryKey = check crypto:decodeRsaPublicKeyFromCertFile(TEST_CERT);
+    JsonRpcListener|Error unpinned = new (19316,
+            auth = [{jwtValidatorConfig: {signatureConfig: {certFile: inMemoryKey}}}]);
+    test:assertTrue(unpinned is InternalError, "an entry with only an in-memory key must pin its issuer");
+    if unpinned is Error {
+        string message = unpinned.message();
+        test:assertTrue(message.startsWith("JsonRpcListenerConfiguration.auth[0] (jwtValidatorConfig) must set issuer"),
+                message);
+    }
+    JsonRpcListener|Error unreachable = new (19316, auth = [{ldapUserStoreConfig: unreachableLdapStore}]);
+    test:assertTrue(unreachable is InternalError, "an unreachable LDAP server at startup must be a returned error");
+    if unreachable is Error {
+        string message = unreachable.message();
+        test:assertTrue(message.startsWith("JsonRpcListenerConfiguration.auth[0] (ldapUserStoreConfig)"), message);
     }
 }
 

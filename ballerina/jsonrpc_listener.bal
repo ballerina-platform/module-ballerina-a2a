@@ -94,7 +94,7 @@ public isolated class JsonRpcListener {
                 return error InternalError(msg, message = msg);
             }
             self.authConfig = auth.cloneReadOnly();
-            self.authenticator = check new (auth.cloneReadOnly());
+            self.authenticator = check new ("JsonRpcListenerConfiguration", auth.cloneReadOnly());
         } else {
             self.authConfig = ();
             self.authenticator = ();

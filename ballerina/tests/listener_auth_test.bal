@@ -604,7 +604,7 @@ function testAuthorityOfNamesTheProviderAndNoSecret() {
 @test:Config {}
 function testAuthUnpinnedIssuerAndUsernameClaimQualifyTheAuthority() returns error? {
     http:ListenerAuthConfig[] configs = [{jwtValidatorConfig: certProviderValidator}];
-    ListenerAuthenticator authenticator = check new (configs.cloneReadOnly());
+    ListenerAuthenticator authenticator = check new ("RestListenerConfiguration", configs.cloneReadOnly());
     string[] authority = ["jwt", string `cert=${TEST_CERT}`, "issuer=a2a-auth-test"];
 
     AuthenticatedCaller|AuthFailure bySubject = authenticator.authenticate("Bearer " + check certSignedToken("dave"));
@@ -618,7 +618,7 @@ function testAuthUnpinnedIssuerAndUsernameClaimQualifyTheAuthority() returns err
 @test:Config {}
 function testAuthIntrospectedIssuerQualifiesTheAuthority() returns error? {
     http:ListenerAuthConfig[] configs = [{oauth2IntrospectionConfig: authTestIntrospection}];
-    ListenerAuthenticator authenticator = check new (configs.cloneReadOnly());
+    ListenerAuthenticator authenticator = check new ("RestListenerConfiguration", configs.cloneReadOnly());
     string endpoint = string `introspection=${authTestIntrospection.url}`;
 
     test:assertEquals(authenticator.authenticate("Bearer opaque-good"),
@@ -727,7 +727,8 @@ function testAuthUnreachableLdapIsAnErrorNotAPanic() {
     RestListener|Error created = new (UNREACHABLE_IDP_TEST_PORT, auth = [{ldapUserStoreConfig: unreachableLdapStore}]);
     test:assertTrue(created is InternalError, "an unreachable LDAP server at startup must be a returned error");
     if created is Error {
-        test:assertTrue(created.message().includes("auth[0] (ldapUserStoreConfig)"), created.message());
+        string message = created.message();
+        test:assertTrue(message.includes("RestListenerConfiguration.auth[0] (ldapUserStoreConfig)"), message);
     }
 }
 
@@ -737,7 +738,9 @@ function testAuthJwtEntryNamingNoProviderIsRejectedAtStartup() {
             auth = [{fileUserStoreConfig: {}}, {jwtValidatorConfig: {signatureConfig: {secret: AUTH_TEST_SECRET}}}]);
     test:assertTrue(created is InternalError, "an entry with only a secret must pin its issuer");
     if created is Error {
-        test:assertTrue(created.message().includes("auth[1] (jwtValidatorConfig) must set issuer"), created.message());
+        string message = created.message();
+        test:assertTrue(message.includes("RestListenerConfiguration.auth[1] (jwtValidatorConfig) must set issuer"),
+                message);
     }
 }
 
