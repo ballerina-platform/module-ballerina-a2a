@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-11
+
 ### Added
 
 - [Introduce `ballerina/a2a`, an A2A (Agent2Agent) protocol client over HTTP+JSON](https://github.com/ballerina-platform/ballerina-library/issues/9158)
