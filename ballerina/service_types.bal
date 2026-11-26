@@ -67,8 +67,8 @@
 #
 # The agent card comes from `@a2a:ServiceConfig` or from an optional
 # `get agentCard` resource (`getAgentCard` over JSON-RPC), not both. That
-# function builds the card from configuration, so it takes no request record,
-# only an optional `a2a:Context`.
+# function builds the card from configuration and takes no parameters: it runs
+# once, when the service is attached, so there is no caller to describe.
 public type Service distinct isolated service object {
 };
 

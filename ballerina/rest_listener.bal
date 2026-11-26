@@ -185,7 +185,7 @@ public isolated class RestListener {
         check checkStreamTiming("RestListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
         string? publicUrl = config.publicUrl;
         if publicUrl is string {
-            self.publicUrl = check normalisePublicUrl(publicUrl);
+            self.publicUrl = check normalisePublicUrl("RestListenerConfiguration", publicUrl);
         } else {
             self.publicUrl = ();
         }
@@ -233,7 +233,7 @@ public isolated class RestListener {
     #            serves, the service has no agent card or two, defines an
     #            incomplete group of operations, defines
     #            the `get extendedAgentCard` resource without `auth`, or attachment fails
-    public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
+    public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
         string mountPath = check mountPathOf(name);
         OperationBinding binding = new (a2aService);
         Capabilities capabilities = check capabilitiesOf(binding);
@@ -246,7 +246,7 @@ public isolated class RestListener {
                 + "the extended agent card is for authenticated callers";
             return error InternalError(msg, message = msg);
         }
-        ServedCards cards = new (self.authConfig, capabilities);
+        ServedCards cards = new (self.authConfig, capabilities, HTTP_JSON);
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
@@ -267,7 +267,7 @@ public isolated class RestListener {
     #
     # + a2aService - The service to detach
     # + return - An `a2a:Error` if detachment fails
-    public isolated function detach(Service a2aService) returns error? {
+    public isolated function detach(Service a2aService) returns Error? {
         RestDispatcherService? dispatcherService = ();
         lock {
             foreach int i in 0 ..< self.attached.length() {
@@ -308,7 +308,7 @@ public isolated class RestListener {
     # Starts the listener.
     #
     # + return - An `a2a:Error` if the listener could not start
-    public isolated function 'start() returns error? {
+    public isolated function 'start() returns Error? {
         error? result = self.httpListener.'start();
         if result is error {
             return wrapTransportError(result);
@@ -318,7 +318,7 @@ public isolated class RestListener {
     # Stops the listener, letting in-flight requests finish.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function gracefulStop() returns error? {
+    public isolated function gracefulStop() returns Error? {
         error? result = self.httpListener.gracefulStop();
         if result is error {
             return wrapTransportError(result);
@@ -328,7 +328,7 @@ public isolated class RestListener {
     # Stops the listener immediately, dropping in-flight requests.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function immediateStop() returns error? {
+    public isolated function immediateStop() returns Error? {
         error? result = self.httpListener.immediateStop();
         if result is error {
             return wrapTransportError(result);
@@ -338,26 +338,27 @@ public isolated class RestListener {
 
 # Checks a configured public URL and puts it in the form the card serves.
 #
-# + url - `RestListenerConfiguration.publicUrl`
+# + configName - The listener configuration's type name, for error messages
+# + url - The configuration's `publicUrl`
 # + return - The URL without a trailing slash, or an `a2a:InternalError` if it
 #            is not an absolute `http://` or `https://` URL with a host and no
 #            query or fragment
-isolated function normalisePublicUrl(string url) returns string|Error {
+isolated function normalisePublicUrl(string configName, string url) returns string|Error {
     string rest;
     if url.startsWith("https://") {
         rest = url.substring(8);
     } else if url.startsWith("http://") {
         rest = url.substring(7);
     } else {
-        return invalidPublicUrl(url, "it must start with http:// or https://");
+        return invalidPublicUrl(configName, url, "it must start with http:// or https://");
     }
     if url.includes("?") || url.includes("#") {
-        return invalidPublicUrl(url, "it must not have a query or a fragment");
+        return invalidPublicUrl(configName, url, "it must not have a query or a fragment");
     }
     int? slash = rest.indexOf("/");
     string host = slash is int ? rest.substring(0, slash) : rest;
     if host == "" {
-        return invalidPublicUrl(url, "it has no host");
+        return invalidPublicUrl(configName, url, "it has no host");
     }
     return stripTrailingSlash(url);
 }
@@ -377,8 +378,8 @@ isolated function checkStreamTiming(string configName, decimal idleTimeout, deci
     }
 }
 
-isolated function invalidPublicUrl(string url, string reason) returns Error {
-    string msg = string `RestListenerConfiguration.publicUrl "${url}" is not usable: ${reason}`;
+isolated function invalidPublicUrl(string configName, string url, string reason) returns Error {
+    string msg = string `${configName}.publicUrl "${url}" is not usable: ${reason}`;
     return error InternalError(msg, message = msg);
 }
 

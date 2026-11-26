@@ -64,7 +64,7 @@ isolated service class JsonRpcDispatcherService {
             AuthenticatedCaller|AuthFailure authenticated =
                     authenticator.authenticate(authorization is string ? authorization : ());
             if authenticated is AuthFailure {
-                logAuthFailure(authenticated, "POST", "/rpc", authorization is string ? schemeOf(authorization) : ());
+                logAuthFailure(authenticated, "POST", pathOf(req), authorization is string ? schemeOf(authorization) : ());
                 return toAuthErrorResponse(authenticated, authenticator.challengeHeaders());
             }
             caller = authenticated;
@@ -91,7 +91,11 @@ isolated service class JsonRpcDispatcherService {
         // A request without an `id` is a notification, which JSON-RPC 2.0 never answers.
         boolean notification = !payload.hasKey("id");
         string method = <string>payload["method"];
-        json params = camelCaseKeys(payload["params"] ?: {});
+        json|Error renamed = camelCaseKeys(payload["params"] ?: {});
+        if renamed is Error {
+            return notification ? noReply() : rpcFailure(id, renamed);
+        }
+        json params = renamed;
 
         Error? gate = checkVersionHeader(req);
         if gate is () {
@@ -131,6 +135,12 @@ isolated service class JsonRpcDispatcherService {
         }
         http:Response response = new;
         response.setJsonPayload({jsonrpc: JSON_RPC_VERSION, id, result});
+        if method == "GetExtendedAgentCard" && result is map<json> {
+            // The extended card is for authenticated callers only, so it carries the same caching headers as it
+            // does over HTTP+JSON (specification section 13.3).
+            json version = result["version"];
+            setCardCaching(response, version is string ? version : "", true);
+        }
         return response;
     }
 
@@ -190,6 +200,7 @@ isolated service class JsonRpcDispatcherService {
             "ListTasks" => {
                 ListTasksRequest request = <ListTasksRequest>check decodeParams(withoutUnsetStatus(params),
                         ListTasksRequest);
+                check validateListTasksRequest(request);
                 return resultJson(check self.binding.listTasks(context, request));
             }
             "CancelTask" => {
@@ -203,25 +214,24 @@ isolated service class JsonRpcDispatcherService {
                 return encodeAgentCardForWire(self.withInterfaceUrl(self.cards.extendedCard(supplied), req));
             }
             "CreateTaskPushNotificationConfig" => {
-                check self.requirePushNotifications("createTaskPushNotificationConfig");
-                TaskPushNotificationConfig request =
-                    <TaskPushNotificationConfig>check decodeParams(params, TaskPushNotificationConfig);
+                check self.requirePushNotifications();
+                TaskPushNotificationConfig request = check decodePushConfigRequest(params);
                 return (check self.binding.createTaskPushNotificationConfig(context, request)).toJson();
             }
             "GetTaskPushNotificationConfig" => {
-                check self.requirePushNotifications("getTaskPushNotificationConfig");
+                check self.requirePushNotifications();
                 GetTaskPushNotificationConfigRequest request = <GetTaskPushNotificationConfigRequest>check
                     decodeParams(params, GetTaskPushNotificationConfigRequest);
                 return (check self.binding.getTaskPushNotificationConfig(context, request)).toJson();
             }
             "ListTaskPushNotificationConfigs" => {
-                check self.requirePushNotifications("listTaskPushNotificationConfigs");
+                check self.requirePushNotifications();
                 ListTaskPushNotificationConfigsRequest request = <ListTaskPushNotificationConfigsRequest>check
                     decodeParams(params, ListTaskPushNotificationConfigsRequest);
                 return (check self.binding.listTaskPushNotificationConfigs(context, request)).toJson();
             }
             "DeleteTaskPushNotificationConfig" => {
-                check self.requirePushNotifications("deleteTaskPushNotificationConfig");
+                check self.requirePushNotifications();
                 DeleteTaskPushNotificationConfigRequest request = <DeleteTaskPushNotificationConfigRequest>check
                     decodeParams(params, DeleteTaskPushNotificationConfigRequest);
                 check self.binding.deleteTaskPushNotificationConfig(context, request);
@@ -231,9 +241,10 @@ isolated service class JsonRpcDispatcherService {
         return methodNotFound(string `no A2A method ${method}`);
     }
 
-    private isolated function requirePushNotifications(string operation) returns Error? {
+    // One gate covers the four push-notification config operations, with the message HTTP+JSON gives.
+    private isolated function requirePushNotifications() returns Error? {
         if !self.card.capabilities.pushNotifications {
-            return serverPushNotificationsUnsupportedError(operation);
+            return serverPushNotificationsUnsupportedError("push-notification-config operations");
         }
     }
 
@@ -291,10 +302,16 @@ isolated function requestIdOf(json payload) returns json {
 # caller's own structure.
 #
 # + params - The request's `params`, or a value inside it
-# + return - The same value with its field names in lowerCamelCase
-isolated function camelCaseKeys(json params) returns json {
+# + return - The same value with its field names in lowerCamelCase, or an
+#            `invalidParams` error when one object gives a field in two spellings
+#            with different values
+isolated function camelCaseKeys(json params) returns json|Error {
     if params is json[] {
-        return from json item in params select camelCaseKeys(item);
+        json[] items = [];
+        foreach json item in params {
+            items.push(check camelCaseKeys(item));
+        }
+        return items;
     }
     if params !is map<json> {
         return params;
@@ -302,7 +319,13 @@ isolated function camelCaseKeys(json params) returns json {
     map<json> renamed = {};
     foreach [string, json] [key, value] in params.entries() {
         string name = camelCaseOf(key);
-        renamed[name] = name == "metadata" || name == "data" ? value : camelCaseKeys(value);
+        json converted = name == "metadata" || name == "data" ? value : check camelCaseKeys(value);
+        // `task_id` and `taskId` in one object are one field given twice. Which of them won would depend on the
+        // order the client wrote them in, so two that disagree are refused.
+        if renamed.hasKey(name) && renamed[name] != converted {
+            return invalidParams(string `"${name}" is given twice, in two spellings, with different values`, name);
+        }
+        renamed[name] = converted;
     }
     return renamed;
 }

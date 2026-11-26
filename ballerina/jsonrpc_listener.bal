@@ -55,7 +55,8 @@ public type JsonRpcListenerConfiguration record {|
 # `listTaskPushNotificationConfigs`, `deleteTaskPushNotificationConfig` and
 # `getExtendedAgentCard`, each taking its request record and, optionally, an
 # `a2a:Context`. A `getAgentCard` function gives a card built from configuration;
-# it takes no request record, and may take an `a2a:Context`. A
+# it takes no parameters, since it runs once, when the service is attached, and
+# there is no caller then. A
 # JSON-RPC client names them in PascalCase (`SendMessage`), as the specification
 # does, and the listener maps them.
 #
@@ -84,7 +85,7 @@ public isolated class JsonRpcListener {
         check checkStreamTiming("JsonRpcListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
         string? publicUrl = config.publicUrl;
         if publicUrl is string {
-            self.publicUrl = check normalisePublicUrl(publicUrl);
+            self.publicUrl = check normalisePublicUrl("JsonRpcListenerConfiguration", publicUrl);
         } else {
             self.publicUrl = ();
         }
@@ -126,7 +127,7 @@ public isolated class JsonRpcListener {
     #            the service has no agent card or two, defines an incomplete
     #            group of operations, defines `getExtendedAgentCard` without
     #            `auth`, or attachment fails
-    public isolated function attach(Service a2aService, string[]|string? name = ()) returns error? {
+    public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
         check checkMountPath(name);
         OperationBinding binding = new (a2aService, byMethodName = true);
         Capabilities capabilities = check capabilitiesOf(binding);
@@ -161,7 +162,7 @@ public isolated class JsonRpcListener {
     #
     # + a2aService - The service to detach
     # + return - An `a2a:Error` if detachment fails
-    public isolated function detach(Service a2aService) returns error? {
+    public isolated function detach(Service a2aService) returns Error? {
         JsonRpcDispatcherService? dispatcherService = ();
         lock {
             if self.agentService === a2aService {
@@ -193,7 +194,7 @@ public isolated class JsonRpcListener {
     # Starts the listener.
     #
     # + return - An `a2a:Error` if the listener could not start
-    public isolated function 'start() returns error? {
+    public isolated function 'start() returns Error? {
         error? result = self.httpListener.'start();
         if result is error {
             return wrapTransportError(result);
@@ -203,7 +204,7 @@ public isolated class JsonRpcListener {
     # Stops the listener, letting in-flight requests finish.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function gracefulStop() returns error? {
+    public isolated function gracefulStop() returns Error? {
         error? result = self.httpListener.gracefulStop();
         if result is error {
             return wrapTransportError(result);
@@ -213,7 +214,7 @@ public isolated class JsonRpcListener {
     # Stops the listener immediately, dropping in-flight requests.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function immediateStop() returns error? {
+    public isolated function immediateStop() returns Error? {
         error? result = self.httpListener.immediateStop();
         if result is error {
             return wrapTransportError(result);

@@ -106,7 +106,8 @@ isolated function agentCardOf(Service a2aService, OperationBinding binding) retu
     ServiceConfiguration? config = serviceConfigurationOf(a2aService);
     boolean hasFunction = binding.isDefined("handleGetAgentCard");
     if config is ServiceConfiguration && hasFunction {
-        string msg = "an a2a:Service declares its agent card with @a2a:ServiceConfig or a get agentCard resource, not both";
+        string msg = string `an a2a:Service declares its agent card with @a2a:ServiceConfig or `
+            + string `${binding.declarationOf("handleGetAgentCard")}, not both`;
         return error InternalError(msg, message = msg);
     }
     if config is ServiceConfiguration {
@@ -116,7 +117,7 @@ isolated function agentCardOf(Service a2aService, OperationBinding binding) retu
         return binding.getAgentCard();
     }
     string msg = "an a2a:Service needs an agent card: add @a2a:ServiceConfig {agentCard: ...} "
-        + "or define a get agentCard resource";
+        + string `or define ${binding.declarationOf("handleGetAgentCard")}`;
     return error InternalError(msg, message = msg);
 }
 
@@ -130,7 +131,7 @@ isolated class ServedCards {
     # + capabilities - What the service's operations imply
     # + protocolBinding - The binding the serving listener speaks
     isolated function init((http:ListenerAuthConfig[] & readonly)? auth, Capabilities capabilities,
-            string protocolBinding = HTTP_JSON) {
+            string protocolBinding) {
         self.auth = auth;
         self.capabilities = capabilities.cloneReadOnly();
         self.protocolBinding = protocolBinding;

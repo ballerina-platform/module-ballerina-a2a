@@ -39,7 +39,6 @@
 
 import ballerina/http;
 import ballerina/log;
-import ballerina/time;
 
 # The A2A protocol version this server implements.
 const A2A_PROTOCOL_VERSION = "1.0";
@@ -224,7 +223,7 @@ isolated service class RestDispatcherService {
         // InvalidAgentResponseError, which is for an agent's own malformed
         // response and is a 500.
         if tenant is string {
-            string? declared = declaredTenant(self.card);
+            string? declared = declaredTenant(self.card, HTTP_JSON);
             if declared is () || declared != tenant {
                 return toRestErrorResponse(invalidParams(
                         string `request routed under tenant "${tenant}", which the agent does not serve`));
@@ -669,7 +668,7 @@ isolated function logAuthFailure(AuthFailure failure, string method, string path
 # + card - The agent card
 # + protocolBinding - The binding whose interface is read
 # + return - The declared tenant, or `()` if the interface declares none
-isolated function declaredTenant(AgentCard card, string protocolBinding = HTTP_JSON) returns string? {
+isolated function declaredTenant(AgentCard card, string protocolBinding) returns string? {
     foreach AgentInterface iface in card.supportedInterfaces {
         if iface.protocolBinding == protocolBinding {
             return iface?.tenant;
@@ -727,10 +726,20 @@ const int AGENT_CARD_CACHE_MAX_AGE_SECONDS = 300;
 # + return - The HTTP response carrying it
 isolated function cardHttpResponse(AgentCard card, boolean authenticated = false) returns http:Response {
     http:Response response = jsonResponse(encodeAgentCardForWire(card));
+    setCardCaching(response, card.version, authenticated);
+    return response;
+}
+
+# Sets the caching headers of a response that carries an Agent Card, whichever
+# binding serves it.
+#
+# + response - The response
+# + version - The card's `version`, which is its `ETag`
+# + authenticated - Whether this is the extended card, which is `private`
+isolated function setCardCaching(http:Response response, string version, boolean authenticated) {
     string scope = authenticated ? "private, " : "";
     response.setHeader("Cache-Control", string `${scope}max-age=${AGENT_CARD_CACHE_MAX_AGE_SECONDS}`);
-    response.setHeader("ETag", string `"${card.version}"`);
-    return response;
+    response.setHeader("ETag", string `"${version}"`);
 }
 
 # Reads an integer query parameter.
@@ -777,7 +786,9 @@ isolated function majorMinor(string version) returns string {
 # Every value present is validated at the wire level here -- an
 # unrecognized `status`, or a `pageSize`/`historyLength` that doesn't parse
 # as an integer, is refused with `InvalidParams` (400) rather than silently
-# dropped, per specification section 6.5's own validation example. Range
+# dropped, per specification section 6.5's own validation example. The checks
+# of a value that the request type cannot make (a timestamp) are shared with
+# the other bindings, in `validateListTasksRequest`. Range
 # checks that depend on interpreting an already-well-formed value against
 # domain rules -- `pageSize` outside 1..100 (section 3.1.4), and whether a
 # `pageToken` names a real cursor -- are the store's job instead
@@ -815,11 +826,6 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
     }
     string? after = req.getQueryParamValue("statusTimestampAfter");
     if after is string {
-        time:Utc|error parsed = time:utcFromString(after);
-        if parsed is error {
-            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`,
-                "statusTimestampAfter");
-        }
         filter.statusTimestampAfter = after;
     }
     string? includeArtifacts = req.getQueryParamValue("includeArtifacts");
@@ -829,6 +835,7 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
         }
         filter.includeArtifacts = includeArtifacts == "true";
     }
+    check validateListTasksRequest(filter);
     return filter;
 }
 
