@@ -405,7 +405,7 @@ Declaring the service on two listeners, `isolated service on publicListener, int
 
 ### JSON-RPC
 
-`a2a:JsonRpcListener` serves the same agent over the JSON-RPC binding at `/rpc`. Where HTTP+JSON addresses an operation by verb and path, JSON-RPC addresses it by method name, so the service defines `remote` functions named for the methods: `sendMessage`, `sendStreamingMessage`, `subscribeToTask`, `getTask`, `listTasks`, `cancelTask`, the four push-notification functions and `getExtendedAgentCard`, with `getAgentCard` for a card built from configuration. Each takes its request record and may take an `a2a:Context`; the rules for what a service must define are the ones above.
+`a2a:JsonRpcListener` serves the same agent over the JSON-RPC binding at `/rpc`. Where HTTP+JSON addresses an operation by verb and path, JSON-RPC addresses it by method name, so the service defines `remote` functions named for the methods: `sendMessage`, `sendStreamingMessage`, `subscribeToTask`, `getTask`, `listTasks`, `cancelTask`, the four push-notification functions and `getExtendedAgentCard`. Each takes its request record and may take an `a2a:Context`. `getAgentCard` builds the card from configuration and takes no request record; it may take an `a2a:Context`. The rules for what a service must define are the ones above.
 
 ```ballerina
 @a2a:ServiceConfig {
@@ -433,7 +433,35 @@ isolated service on new a2a:JsonRpcListener(9090) {
 }
 ```
 
-A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {...}}` and the `A2A-Version: 1.0` header. A failure is a JSON-RPC `error` object on a 200, carrying the specification's code (`-32001` task not found, `-32004` unsupported operation, and so on); streaming methods answer with Server-Sent Events whose every `data` is a complete JSON-RPC response. A request without an `id` is a notification: it runs, and the reply is an empty 204. `JsonRpcListenerConfiguration` takes the same fields as `RestListenerConfiguration` (`auth`, TLS, `publicUrl`, stream timing), so the sections below apply to both listeners. To serve one agent over both bindings, build both listeners on one `http:Listener`: the card at `/.well-known/agent-card.json` then lists both interfaces, so both services must declare the same card and define the same capabilities, and both listeners must configure the same `auth` and `publicUrl`. The card is shared, but task state is not: give both services one `a2a:DefaultHandler` (create it once and pass it to each), or a task created over one binding is not found over the other.
+A client calls `POST /rpc` with `{"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {...}}` and the `A2A-Version: 1.0` header. A failure is a JSON-RPC `error` object on a 200, carrying the specification's code (`-32001` task not found, `-32004` unsupported operation, and so on); streaming methods answer with Server-Sent Events whose every `data` is a complete JSON-RPC response. The exception is authentication: when `auth` is configured and the caller's credentials are missing or refused, the listener answers with an HTTP 401 or 403 before it reads the envelope, so a client handles credential failures at the HTTP level. A request without an `id` is a notification, which JSON-RPC never answers: the reply is always an empty 204. It does not say whether the operation ran, because a notification that fails the version, extension, tenant or operation checks, or whose operation returns an error, is answered the same way. `JsonRpcListenerConfiguration` takes the same fields as `RestListenerConfiguration` (`auth`, TLS, `publicUrl`, stream timing), so the sections below apply to both listeners. To serve one agent over both bindings, build both listeners on one `http:Listener`: the card at `/.well-known/agent-card.json` then lists both interfaces, so both services must declare the same card and define the same capabilities, and both listeners must configure the same `auth` and `publicUrl`. The card is shared, but task state is not: give both services one `a2a:DefaultHandler` (create it once and pass it to each), or a task created over one binding is not found over the other.
+
+```ballerina
+// One handler behind both bindings, so a task created over one is found over the other.
+final a2a:DefaultHandler handler = new (new WeatherExecutor());
+
+final http:Listener shared = check new (9090);
+listener a2a:RestListener restListener = new (shared);
+listener a2a:JsonRpcListener rpcListener = new (shared);
+
+// `weatherCard` is the same constant card for both services.
+@a2a:ServiceConfig {agentCard: weatherCard}
+isolated service on restListener {
+    isolated resource function post message\:send(a2a:Context context, a2a:SendMessageRequest request)
+            returns a2a:Task|a2a:Message|a2a:Error {
+        return handler.handleSendMessage(context, request);
+    }
+    // ... the other operations, each handing its request to `handler`
+}
+
+@a2a:ServiceConfig {agentCard: weatherCard}
+isolated service on rpcListener {
+    isolated remote function sendMessage(a2a:Context context, a2a:SendMessageRequest request)
+            returns a2a:Task|a2a:Message|a2a:Error {
+        return handler.handleSendMessage(context, request);
+    }
+    // ... the other operations, each handing its request to `handler`
+}
+```
 
 ### Bringing your own handler
 

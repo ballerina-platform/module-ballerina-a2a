@@ -61,12 +61,14 @@
 # On an `a2a:JsonRpcListener` they are `remote` functions named for the
 # JSON-RPC methods: `sendMessage`, `sendStreamingMessage`, `getTask`,
 # `listTasks`, `cancelTask`, `subscribeToTask`, the four push-notification
-# functions (`createTaskPushNotificationConfig`, ...), `getExtendedAgentCard`
-# and `getAgentCard`, each taking the request record and an optional
-# `a2a:Context`. The same rules apply.
+# functions (`createTaskPushNotificationConfig`, ...) and `getExtendedAgentCard`,
+# each taking the request record and an optional `a2a:Context`. The same rules
+# apply.
 #
 # The agent card comes from `@a2a:ServiceConfig` or from an optional
-# `get agentCard` resource (`getAgentCard` over JSON-RPC), not both.
+# `get agentCard` resource (`getAgentCard` over JSON-RPC), not both. That
+# function builds the card from configuration, so it takes no request record,
+# only an optional `a2a:Context`.
 public type Service distinct isolated service object {
 };
 

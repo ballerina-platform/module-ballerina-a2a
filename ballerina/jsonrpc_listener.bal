@@ -54,7 +54,8 @@ public type JsonRpcListenerConfiguration record {|
 # `createTaskPushNotificationConfig`, `getTaskPushNotificationConfig`,
 # `listTaskPushNotificationConfigs`, `deleteTaskPushNotificationConfig` and
 # `getExtendedAgentCard`, each taking its request record and, optionally, an
-# `a2a:Context`; a `getAgentCard` function gives a card built from configuration. A
+# `a2a:Context`. A `getAgentCard` function gives a card built from configuration;
+# it takes no request record, and may take an `a2a:Context`. A
 # JSON-RPC client names them in PascalCase (`SendMessage`), as the specification
 # does, and the listener maps them.
 #
