@@ -161,7 +161,7 @@ public isolated class JsonRpcListener {
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
         check addCardBinding(self.httpListener, self.interfaceScheme, served, JSONRPC, mountPath,
-                self.authConfig, self.publicUrl);
+                self.authConfig, self.publicUrl, self.validateInputModes);
         lock {
             self.agentService = a2aService;
             self.dispatcher = dispatcherService;

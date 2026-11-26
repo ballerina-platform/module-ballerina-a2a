@@ -236,3 +236,20 @@ function testTheListenerLifecycleMethodsReturnTypedErrors() {
     Error? detached = created.detach(new JsonRpcNoCardService());
     test:assertTrue(detached is () || detached is Error);
 }
+
+@test:Config {}
+function testParamsAreRenamedAfterTheVersionCheckAndOnlyWhenTheyNeedIt() returns error? {
+    // A request the version check refuses is refused for that, not for what its params would have been renamed to.
+    http:Response refused = check rawRpcPost(JSON_RPC_TEST_PORT,
+            {jsonrpc: "2.0", id: "o-1", method: "ListTasks", params: {page_size: 1, pageSize: 2}},
+            {"A2A-Version": "0.3"});
+    json reply = check refused.getJsonPayload();
+    test:assertEquals(check reply.'error.code, -32009);
+
+    // A request that already uses lowerCamelCase is left as it is, at every level.
+    json camel = {message: {messageId: "m", parts: [{text: "x"}], metadata: {some_key: 1}}, tenant: "t"};
+    test:assertEquals(camelCaseKeys(camel), camel);
+    test:assertFalse(hasSnakeCaseKey(camel), "a metadata map is the caller's own structure");
+    test:assertTrue(hasSnakeCaseKey({message: {message_id: "m"}}));
+    test:assertTrue(hasSnakeCaseKey([{task_id: "t"}]));
+}

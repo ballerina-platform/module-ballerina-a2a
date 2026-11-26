@@ -120,6 +120,10 @@ public type ListenerConfiguration record {|
     # such as `text` matches all its subtypes, and `type/*` and `*/*` are
     # wildcards.
     #
+    # Two A2A listeners built on one `http:Listener` must set the same value:
+    # the accepted media types come from the one card they publish, so a
+    # difference would enforce it over one binding and ignore it over the other.
+    #
     # Off by default, as in the reference SDKs: turning it on refuses content
     # the agent would otherwise accept, and the A2A TCK's `CORE-SEND-003` sends
     # an undeclared media type and expects the send to succeed.

@@ -93,11 +93,6 @@ isolated service class JsonRpcDispatcherService {
         // A request without an `id` is a notification, which JSON-RPC 2.0 never answers.
         boolean notification = !payload.hasKey("id");
         string method = <string>payload["method"];
-        json|Error renamed = camelCaseKeys(payload["params"] ?: {});
-        if renamed is Error {
-            return notification ? noReply() : rpcFailure(id, renamed);
-        }
-        json params = renamed;
 
         Error? gate = checkVersionHeader(req);
         if gate is () {
@@ -106,6 +101,12 @@ isolated service class JsonRpcDispatcherService {
         if gate is Error {
             return notification ? noReply() : rpcFailure(id, gate);
         }
+        // After the checks above, so a request they refuse does not pay for it.
+        json|Error renamed = camelCaseKeys(payload["params"] ?: {});
+        if renamed is Error {
+            return notification ? noReply() : rpcFailure(id, renamed);
+        }
+        json params = renamed;
 
         // An empty tenant is the protobuf default a client serialises when it names none.
         string? tenant = params is map<json> && params["tenant"] is string && params["tenant"] != ""
@@ -308,10 +309,45 @@ isolated function requestIdOf(json payload) returns json {
 #            `invalidParams` error when one object gives a field in two spellings
 #            with different values
 isolated function camelCaseKeys(json params) returns json|Error {
+    // The usual client already writes lowerCamelCase, so the request is looked over without being copied, and
+    // returned as it is when no key needs renaming.
+    if !hasSnakeCaseKey(params) {
+        return params;
+    }
+    return renameSnakeCaseKeys(params);
+}
+
+# Whether any key that is renamed contains an underscore.
+#
+# + value - The request's `params`, or a value inside it
+# + return - `true` if a key needs renaming
+isolated function hasSnakeCaseKey(json value) returns boolean {
+    if value is json[] {
+        foreach json item in value {
+            if hasSnakeCaseKey(item) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if value is map<json> {
+        foreach [string, json] [key, child] in value.entries() {
+            if key.includes("_") {
+                return true;
+            }
+            if key != "metadata" && key != "data" && hasSnakeCaseKey(child) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+isolated function renameSnakeCaseKeys(json params) returns json|Error {
     if params is json[] {
         json[] items = [];
         foreach json item in params {
-            items.push(check camelCaseKeys(item));
+            items.push(check renameSnakeCaseKeys(item));
         }
         return items;
     }
@@ -320,8 +356,8 @@ isolated function camelCaseKeys(json params) returns json|Error {
     }
     map<json> renamed = {};
     foreach [string, json] [key, value] in params.entries() {
-        string name = camelCaseOf(key);
-        json converted = name == "metadata" || name == "data" ? value : check camelCaseKeys(value);
+        string name = key.includes("_") ? camelCaseOf(key) : key;
+        json converted = name == "metadata" || name == "data" ? value : check renameSnakeCaseKeys(value);
         // `task_id` and `taskId` in one object are one field given twice. Which of them won would depend on the
         // order the client wrote them in, so two that disagree are refused.
         if renamed.hasKey(name) && renamed[name] != converted {

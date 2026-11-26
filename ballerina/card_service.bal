@@ -26,6 +26,7 @@ isolated class CardRegistry {
     private AgentCard? card = ();
     private (http:ListenerAuthConfig[] & readonly)? auth = ();
     private string? publicUrl = ();
+    private boolean validateInputModes = false;
     private string[][] bindings = [];
 
     # Records a service's card and binding.
@@ -42,7 +43,8 @@ isolated class CardRegistry {
     # + return - An `a2a:InternalError` if the card, `auth` or `publicUrl`
     #            differs, or the path is taken
     isolated function add(AgentCard served, string protocolBinding, string mountPath,
-            (http:ListenerAuthConfig[] & readonly)? auth, string? publicUrl) returns Error? {
+            (http:ListenerAuthConfig[] & readonly)? auth, string? publicUrl, boolean validateInputModes)
+            returns Error? {
         json servedWithoutInterfaces = withoutInterfaces(served).toJson();
         lock {
             AgentCard? existing = self.card;
@@ -55,6 +57,10 @@ isolated class CardRegistry {
                     mismatch = "be on listeners that configure the same `auth`";
                 } else if publicUrl != self.publicUrl {
                     mismatch = "be on listeners that set the same `publicUrl`";
+                } else if validateInputModes != self.validateInputModes {
+                    // The accepted media types come from the shared card, so one binding would enforce it and the
+                    // other ignore it.
+                    mismatch = "be on listeners that set the same `validateInputModes`";
                 }
                 if mismatch is string {
                     string msg = "every a2a:Service attached to one http:Listener must " + mismatch
@@ -71,6 +77,7 @@ isolated class CardRegistry {
             self.card = served.cloneReadOnly();
             self.auth = auth;
             self.publicUrl = publicUrl;
+            self.validateInputModes = validateInputModes;
             self.bindings.push([protocolBinding, mountPath]);
         }
     }
@@ -92,6 +99,7 @@ isolated class CardRegistry {
                 self.card = ();
                 self.auth = ();
                 self.publicUrl = ();
+                self.validateInputModes = false;
             }
         }
     }
@@ -212,15 +220,15 @@ isolated function rememberSharedSettings(http:Listener httpListener, (http:Liste
 #            cannot be mounted
 isolated function addCardBinding(http:Listener httpListener, string interfaceScheme, AgentCard & readonly served,
         string protocolBinding, string mountPath, (http:ListenerAuthConfig[] & readonly)? auth,
-        string? publicUrl) returns Error? {
+        string? publicUrl, boolean validateInputModes) returns Error? {
     lock {
         foreach [http:Listener, CardRegistry, CardService] [existingListener, registry, _] in sharedCardStates {
             if existingListener === httpListener {
-                return registry.add(served, protocolBinding, mountPath, auth, publicUrl);
+                return registry.add(served, protocolBinding, mountPath, auth, publicUrl, validateInputModes);
             }
         }
         CardRegistry registry = new;
-        check registry.add(served, protocolBinding, mountPath, auth, publicUrl);
+        check registry.add(served, protocolBinding, mountPath, auth, publicUrl, validateInputModes);
         CardService cardService = new (registry, interfaceScheme);
         error? mounted = httpListener.attach(cardService, CARD_BASE_PATH);
         if mounted is error {

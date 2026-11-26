@@ -82,3 +82,21 @@ function testWhatAListenerLeavesUnsetIsItsOwnOnceNothingIsPublishedOnTheHttpList
     test:assertEquals(response.statusCode, 200, "no authentication was inherited from a listener that is gone");
     check shared.gracefulStop();
 }
+
+@test:Config {}
+function testTwoListenersMustSetTheSameValidateInputModes() returns error? {
+    http:Listener shared = check new (19358);
+    RestListener strict = check new (shared, validateInputModes = true);
+    JsonRpcListener lenient = check new (shared);
+    DefaultHandler handler = new (new CountingAgent());
+    check strict.attach(new FullService(handler, rpcTestCard));
+    Error? rejected = lenient.attach(new RpcService(handler, rpcTestCard));
+    test:assertTrue(rejected is InternalError);
+    test:assertTrue((<Error>rejected).message().includes("the same `validateInputModes`"), (<Error>rejected).message());
+
+    http:Listener other = check new (19359);
+    RestListener firstStrict = check new (other, validateInputModes = true);
+    JsonRpcListener secondStrict = check new (other, validateInputModes = true);
+    check firstStrict.attach(new FullService(handler, rpcTestCard));
+    check secondStrict.attach(new RpcService(handler, rpcTestCard));
+}

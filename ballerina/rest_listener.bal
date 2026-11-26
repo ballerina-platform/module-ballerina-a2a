@@ -160,7 +160,7 @@ public isolated class RestListener {
         RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
                 self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
         check addCardBinding(self.httpListener, self.interfaceScheme, served, HTTP_JSON, mountPath, self.authConfig,
-                self.publicUrl);
+                self.publicUrl, self.validateInputModes);
         lock {
             self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
         }
