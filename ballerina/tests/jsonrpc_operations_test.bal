@@ -155,14 +155,6 @@ function testEveryA2aErrorTypeHasItsJsonRpcCode() {
     }
 }
 
-@test:Config {}
-function testAJsonRpcListenerAcceptsItsPathInEveryForm() {
-    test:assertEquals(checkMountPath(()), ());
-    test:assertEquals(checkMountPath("/rpc"), ());
-    test:assertEquals(checkMountPath(["rpc"]), ());
-    test:assertTrue(checkMountPath(["rpc", "v2"]) is Error, "only /rpc is served");
-}
-
 // A stream that replays a fixed list of items, to drive the SSE framing
 // without a live task behind it.
 isolated class ScriptedStreamEvents {

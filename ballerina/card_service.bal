@@ -109,7 +109,7 @@ isolated class CardRegistry {
             AgentCard copy = {...card.clone()};
             AgentInterface[] interfaces = [];
             foreach string[] binding in self.bindings {
-                interfaces.push({url: string `${baseUrl}/${binding[1]}`, protocolBinding: binding[0],
+                interfaces.push({url: interfaceUrlAt(baseUrl, binding[1]), protocolBinding: binding[0],
                     protocolVersion: A2A_PROTOCOL_VERSION});
             }
             copy.supportedInterfaces = interfaces;
@@ -165,7 +165,7 @@ isolated function addCardBinding(http:Listener httpListener, string interfaceSch
         CardRegistry registry = new;
         check registry.add(served, protocolBinding, mountPath, auth, publicUrl);
         CardService cardService = new (registry, interfaceScheme);
-        error? mounted = httpListener.attach(cardService);
+        error? mounted = httpListener.attach(cardService, CARD_BASE_PATH);
         if mounted is error {
             return wrapTransportError(mounted);
         }
@@ -204,6 +204,62 @@ isolated function removeCardBinding(http:Listener httpListener, string mountPath
     }
 }
 
+# The path the public Agent Card is served at (specification section 8.2). The
+# card service is mounted at exactly this path, and not at `/` with a resource
+# for it, so that the root stays free for a binding that is declared at `/`.
+final readonly & string[] CARD_BASE_PATH = [".well-known", "agent-card.json"];
+
+# Reads the path a service was declared at, as the runtime passes it to `attach`:
+# nothing for `service on listener`, which is the listener's default path; an empty
+# array for `service / on listener`, which is the root; the segments of
+# `service /agents/travel on listener`.
+#
+# + name - The `name` the runtime passed to `attach`
+# + defaultPath - The path a service declared without one is served at
+# + return - The path without a leading slash, empty for the root, or an `a2a:Error`
+#            for a segment that is empty or holds a slash
+isolated function mountPathOf(string[]|string? name, string defaultPath) returns string|Error {
+    if name is () {
+        return defaultPath;
+    }
+    string[] segments;
+    if name is string {
+        segments = from string segment in re `/`.split(name)
+            where segment != ""
+            select segment;
+    } else {
+        foreach string segment in name {
+            if segment == "" || segment.includes("/") {
+                string msg = string `"${segment}" is not a usable path segment for an a2a:Service`;
+                return error InternalError(msg, message = msg);
+            }
+        }
+        segments = name;
+    }
+    return string:'join("/", ...segments);
+}
+
+# Attaches a service to an `http:Listener` at a path.
+#
+# + httpListener - The listener
+# + httpService - The service
+# + mountPath - The path, empty for the root
+# + return - The error `http:Listener.attach` raised, if any
+isolated function attachAt(http:Listener httpListener, http:Service httpService, string mountPath) returns error? {
+    if mountPath == "" {
+        return httpListener.attach(httpService);
+    }
+    return httpListener.attach(httpService, re `/`.split(mountPath));
+}
+
+# The address of an interface mounted at a path under a base URL.
+#
+# + baseUrl - The listener's public URL, without a trailing slash
+# + mountPath - The interface's path, empty for the root
+# + return - The URL the card gives for the interface
+isolated function interfaceUrlAt(string baseUrl, string mountPath) returns string =>
+    mountPath == "" ? baseUrl : string `${baseUrl}/${mountPath}`;
+
 # Serves the public Agent Card at `/.well-known/agent-card.json` (specification
 # section 8.2). Public: it is the one path that needs no authentication. Any
 # other path outside a mounted binding gets the HTTP module's own 404 or 405.
@@ -218,7 +274,7 @@ isolated service class CardService {
         self.interfaceScheme = interfaceScheme;
     }
 
-    isolated resource function get \.well\-known/agent\-card\.json(http:Request req) returns http:Response|http:NotFound {
+    isolated resource function get .(http:Request req) returns http:Response|http:NotFound {
         string|http:HeaderNotFoundError host = req.getHeader("Host");
         AgentCard? card = self.registry.served(self.interfaceScheme, host is string ? host : "");
         if card is () {

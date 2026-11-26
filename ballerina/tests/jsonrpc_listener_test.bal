@@ -380,14 +380,6 @@ function testListenersSharingACardMustShareTheirPublicUrl() returns error? {
     test:assertTrue((<error>rejected).message().includes("the same `publicUrl`"), (<error>rejected).message());
 }
 
-@test:Config {}
-function testAJsonRpcListenerServesOnlyItsOwnPath() returns error? {
-    JsonRpcListener other = check new (19282);
-    error? rejected = other.attach(new RpcService(rpcHandler, rpcTestCard), "rest");
-    test:assertTrue(rejected is InternalError, "a JsonRpcListener serves /rpc only");
-    test:assertTrue((<error>rejected).message().includes("/rpc"), (<error>rejected).message());
-}
-
 // The @a2a-js/sdk sends `"status": "UNRECOGNIZED"` for an unset filter.
 @test:Config {}
 function testAnUnsetStatusFilterIsNoFilter() returns error? {

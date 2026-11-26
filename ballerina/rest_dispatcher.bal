@@ -259,7 +259,8 @@ isolated service class RestDispatcherService {
         if host !is string && publicUrl is () {
             return card;
         }
-        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "") + "/" + self.mountPath;
+        string url = interfaceUrlAt(interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : ""),
+                self.mountPath);
         // `card` is readonly, so round-trip through JSON for a fresh mutable
         // copy, then fill the HTTP+JSON interface's URL. `deriveServedCard`
         // put a single such entry there, on both the public and extended

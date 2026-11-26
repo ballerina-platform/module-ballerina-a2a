@@ -23,7 +23,7 @@
 import ballerina/http;
 import ballerina/log;
 
-# The path the JSON-RPC binding is served at.
+# The path the JSON-RPC binding is served at when a service is declared without one.
 const string JSON_RPC_MOUNT_PATH = "rpc";
 
 # Configuration for an `a2a:JsonRpcListener`: the same as for an
@@ -32,7 +32,8 @@ public type JsonRpcListenerConfiguration record {|
     *RestListenerConfiguration;
 |};
 
-# Serves `a2a:Service`s over JSON-RPC 2.0: the JSON-RPC binding at `/rpc`.
+# Serves `a2a:Service`s over JSON-RPC 2.0: the JSON-RPC binding, at `/rpc` unless the
+# service is declared at another path, or at `/`.
 #
 # ```ballerina
 # listener a2a:JsonRpcListener agent = new (9090);
@@ -73,6 +74,8 @@ public isolated class JsonRpcListener {
     private final boolean validateInputModes;
     private Service? agentService = ();
     private JsonRpcDispatcherService? dispatcher = ();
+    // The path the attached service is served at, empty for the root.
+    private string mountPath = JSON_RPC_MOUNT_PATH;
 
     # Creates a JsonRpcListener.
     #
@@ -128,7 +131,7 @@ public isolated class JsonRpcListener {
     #            group of operations, defines `getExtendedAgentCard` without
     #            `auth`, or attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
-        check checkMountPath(name);
+        string mountPath = check mountPathOf(name, JSON_RPC_MOUNT_PATH);
         OperationBinding binding = new (a2aService, byMethodName = true);
         Capabilities capabilities = check capabilitiesOf(binding);
         AgentCard supplied = check agentCardOf(a2aService, binding);
@@ -142,19 +145,20 @@ public isolated class JsonRpcListener {
         ServedCards cards = new (self.authConfig, capabilities, JSONRPC);
         AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
         JsonRpcDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
-                self.interfaceScheme, self.publicUrl, self.streamTiming, self.validateInputModes);
-        check addCardBinding(self.httpListener, self.interfaceScheme, served, JSONRPC, JSON_RPC_MOUNT_PATH,
+                self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
+        check addCardBinding(self.httpListener, self.interfaceScheme, served, JSONRPC, mountPath,
                 self.authConfig, self.publicUrl);
         lock {
             self.agentService = a2aService;
             self.dispatcher = dispatcherService;
+            self.mountPath = mountPath;
         }
-        error? result = self.httpListener.attach(dispatcherService, JSON_RPC_MOUNT_PATH);
+        error? result = attachAt(self.httpListener, dispatcherService, mountPath);
         if result is error {
             self.forget();
             return wrapTransportError(result);
         }
-        log:printInfo("A2A service attached", path = "/" + JSON_RPC_MOUNT_PATH,
+        log:printInfo("A2A service attached", path = "/" + mountPath,
                 operations = binding.defined.toString());
     }
 
@@ -164,15 +168,17 @@ public isolated class JsonRpcListener {
     # + return - An `a2a:Error` if detachment fails
     public isolated function detach(Service a2aService) returns Error? {
         JsonRpcDispatcherService? dispatcherService = ();
+        string mountPath = JSON_RPC_MOUNT_PATH;
         lock {
             if self.agentService === a2aService {
                 dispatcherService = self.dispatcher;
+                mountPath = self.mountPath;
                 self.agentService = ();
                 self.dispatcher = ();
             }
         }
         if dispatcherService is JsonRpcDispatcherService {
-            removeCardBinding(self.httpListener, JSON_RPC_MOUNT_PATH);
+            removeCardBinding(self.httpListener, mountPath);
             error? result = self.httpListener.detach(dispatcherService);
             if result is error {
                 return wrapTransportError(result);
@@ -181,10 +187,14 @@ public isolated class JsonRpcListener {
     }
 
     # Undoes the bookkeeping of an attach that failed partway, so the card does
-    # not advertise an interface that serves nothing and `/rpc` can be used
+    # not advertise an interface that serves nothing and its path can be used
     # again.
     private isolated function forget() {
-        removeCardBinding(self.httpListener, JSON_RPC_MOUNT_PATH);
+        string mountPath;
+        lock {
+            mountPath = self.mountPath;
+        }
+        removeCardBinding(self.httpListener, mountPath);
         lock {
             self.agentService = ();
             self.dispatcher = ();
@@ -220,28 +230,4 @@ public isolated class JsonRpcListener {
             return wrapTransportError(result);
         }
     }
-}
-
-# Checks the path a service was declared at.
-#
-# + name - The `name` the runtime passed to `attach`
-# + return - An `a2a:Error` for any path but none or `rpc`
-isolated function checkMountPath(string[]|string? name) returns Error? {
-    string path;
-    if name is string {
-        path = name;
-    } else if name is string[] {
-        path = string:'join("/", ...name);
-    } else {
-        path = "";
-    }
-    while path.startsWith("/") {
-        path = path.substring(1);
-    }
-    if path == "" || path == JSON_RPC_MOUNT_PATH {
-        return;
-    }
-    string msg = string `an a2a:JsonRpcListener serves its service at /${JSON_RPC_MOUNT_PATH}: declare it without `
-        + string `a path, not at "/${path}"`;
-    return error InternalError(msg, message = msg);
 }

@@ -41,11 +41,12 @@ isolated service class JsonRpcDispatcherService {
     private final string interfaceScheme;
     private final string? publicUrl;
     private final StreamTiming & readonly streamTiming;
+    private final string mountPath;
     private final boolean validateInputModes;
 
     isolated function init(AgentCard card, OperationBinding binding, ServedCards cards,
             ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl,
-            StreamTiming streamTiming, boolean validateInputModes) {
+            StreamTiming streamTiming, string mountPath, boolean validateInputModes) {
         self.card = card.cloneReadOnly();
         self.binding = binding;
         self.cards = cards;
@@ -53,6 +54,7 @@ isolated service class JsonRpcDispatcherService {
         self.interfaceScheme = interfaceScheme;
         self.publicUrl = publicUrl;
         self.streamTiming = streamTiming.cloneReadOnly();
+        self.mountPath = mountPath;
         self.validateInputModes = validateInputModes;
     }
 
@@ -266,8 +268,8 @@ isolated service class JsonRpcDispatcherService {
         if host !is string && publicUrl is () {
             return card;
         }
-        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "")
-            + "/" + JSON_RPC_MOUNT_PATH;
+        string url = interfaceUrlAt(interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : ""),
+                self.mountPath);
         AgentCard|error served = card.toJson().cloneWithType(AgentCard);
         if served is error {
             return card;

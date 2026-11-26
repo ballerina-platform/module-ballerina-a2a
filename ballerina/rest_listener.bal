@@ -128,7 +128,8 @@ isolated function httpListenerConfigurationOf(RestListenerConfiguration config) 
     return {...httpConfig};
 }
 
-# Serves `a2a:Service`s over HTTP: the HTTP+JSON (REST) binding at `/rest`.
+# Serves `a2a:Service`s over HTTP: the HTTP+JSON (REST) binding, at `/rest` unless the
+# service is declared at another path, or at `/`.
 #
 # The listener carries traffic and nothing else. The agent is a service attached
 # to it, at a path that names the binding:
@@ -151,7 +152,8 @@ isolated function httpListenerConfigurationOf(RestListenerConfiguration config) 
 # When a service is attached the listener reads its agent card, finds which of
 # the A2A operations it defines, and serves the card at
 # `/.well-known/agent-card.json` with the capabilities those operations imply and
-# an HTTP+JSON interface at this listener's address plus `/rest` -- so a card
+# an HTTP+JSON interface at this listener's address plus its path (`/rest` unless
+# the service is declared elsewhere) -- so a card
 # cannot advertise a capability the agent does not provide. Pass
 # `capabilities: {}` and `supportedInterfaces: []` as placeholders; they are
 # replaced. An operation the service does not define answers
@@ -234,7 +236,7 @@ public isolated class RestListener {
     #            incomplete group of operations, defines
     #            the `get extendedAgentCard` resource without `auth`, or attachment fails
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
-        string mountPath = check mountPathOf(name);
+        string mountPath = check mountPathOf(name, REST_MOUNT_PATH);
         OperationBinding binding = new (a2aService);
         Capabilities capabilities = check capabilitiesOf(binding);
         AgentCard supplied = check agentCardOf(a2aService, binding);
@@ -255,7 +257,7 @@ public isolated class RestListener {
         lock {
             self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
         }
-        error? result = self.httpListener.attach(dispatcherService, mountPath);
+        error? result = attachAt(self.httpListener, dispatcherService, mountPath);
         if result is error {
             self.forget(a2aService, mountPath);
             return wrapTransportError(result);
@@ -393,33 +395,5 @@ type AttachedService record {|
     string mountPath;
 |};
 
-# The path the HTTP+JSON binding is served at.
+# The path the HTTP+JSON binding is served at when a service is declared without one.
 const string REST_MOUNT_PATH = "rest";
-
-# Checks the path a service was declared at and gives the path it is served at.
-#
-# The binding is named by the listener, not by the path, so a service is
-# declared without one (`service on new a2a:RestListener(9090)`). `/rest` is
-# accepted for a service that spells it out.
-#
-# + name - The `name` the runtime passed to `attach`
-# + return - `rest`, or an `a2a:Error` for any other path
-isolated function mountPathOf(string[]|string? name) returns string|Error {
-    string path;
-    if name is string {
-        path = name;
-    } else if name is string[] {
-        path = string:'join("/", ...name);
-    } else {
-        path = "";
-    }
-    while path.startsWith("/") {
-        path = path.substring(1);
-    }
-    if path == "" || path == REST_MOUNT_PATH {
-        return REST_MOUNT_PATH;
-    }
-    string msg = string `an a2a:RestListener serves its service at /${REST_MOUNT_PATH}: declare it without a path, `
-        + string `not at "/${path}"`;
-    return error InternalError(msg, message = msg);
-}

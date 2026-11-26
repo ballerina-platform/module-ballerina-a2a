@@ -57,12 +57,12 @@ isolated service class RootBlocker {
 function testARetriedAttachMountsTheCardAfterTheCardServiceFailed() returns error? {
     http:Listener shared = check new (RETRY_ATTACH_TEST_PORT);
     RootBlocker blocker = new;
-    check shared.attach(blocker);
+    check shared.attach(blocker, CARD_BASE_PATH);
     RestListener agentListener = check new (shared);
     FullService agent = new (new DefaultHandler(new CountingAgent()), authTestCard);
 
     error? first = agentListener.attach(agent);
-    test:assertTrue(first is error, "the card service cannot mount while / is taken");
+    test:assertTrue(first is error, "the card service cannot mount while its path is taken");
 
     check shared.detach(blocker);
     check agentListener.attach(agent);
@@ -183,12 +183,12 @@ const int RETRY_RPC_ATTACH_TEST_PORT = 19314;
 function testARetriedJsonRpcAttachMountsTheCardAfterTheCardServiceFailed() returns error? {
     http:Listener shared = check new (RETRY_RPC_ATTACH_TEST_PORT);
     RootBlocker blocker = new;
-    check shared.attach(blocker);
+    check shared.attach(blocker, CARD_BASE_PATH);
     JsonRpcListener agentListener = check new (shared);
     SendOnlyRpcService agent = new;
 
     error? first = agentListener.attach(agent);
-    test:assertTrue(first is error, "the card service cannot mount while / is taken");
+    test:assertTrue(first is error, "the card service cannot mount while its path is taken");
 
     check shared.detach(blocker);
     check agentListener.attach(agent);
