@@ -20,7 +20,6 @@
 // nothing about the agent itself, which its service owns.
 
 import ballerina/http;
-import ballerina/log;
 
 # Configuration for an `a2a:RestListener`: how requests reach the agent. Every field is in
 # `a2a:ListenerConfiguration`, which `a2a:JsonRpcListenerConfiguration` includes as well.
@@ -59,16 +58,7 @@ public type RestListenerConfiguration record {|
 # replaced. An operation the service does not define answers
 # `UnsupportedOperationError`.
 public isolated class RestListener {
-    private final http:Listener httpListener;
-    private final (http:ListenerAuthConfig[] & readonly)? authConfig;
-    private final ListenerAuthenticator? authenticator;
-    private final StreamTiming & readonly streamTiming;
-    // What the served card's interface URL is built from: the scheme this
-    // listener really serves, and the explicit public URL if one was configured.
-    private final string interfaceScheme;
-    private final string? publicUrl;
-    private final boolean validateInputModes;
-    private AttachedService[] attached = [];
+    private final ListenerTransport transport;
 
     # Creates a RestListener.
     #
@@ -84,51 +74,8 @@ public isolated class RestListener {
     #            example a JWKS that cannot be preloaded, or an LDAP server that
     #            cannot be reached)
     public isolated function init(int|http:Listener listenTo, *RestListenerConfiguration config) returns Error? {
-        check checkStreamTiming("RestListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
-        // A listener built on an `http:Listener` that an earlier A2A listener was built on takes that one's `auth`
-        // and `publicUrl` when it sets none, so only a real conflict is an error.
-        var inherited = inheritedSettings(listenTo, config.auth, config.publicUrl);
-        http:ListenerAuthConfig[]? inheritedAuth = inherited[0];
-        string? publicUrl = inherited[1];
-        if publicUrl is string {
-            self.publicUrl = check normalisePublicUrl("RestListenerConfiguration", publicUrl);
-        } else {
-            self.publicUrl = ();
-        }
-        // The auth handlers are built first, and their failure returned first: some
-        // of them reach the identity provider while being built (a JWKS cache is
-        // preloaded, an LDAP server is connected to), so a listener that cannot
-        // reach it must fail before anything is bound.
-        http:ListenerAuthConfig[]? auth = inheritedAuth;
-        if auth is http:ListenerAuthConfig[] {
-            if auth.length() == 0 {
-                string msg = "RestListenerConfiguration.auth must contain at least one entry; "
-                    + "leave it unset for no authentication";
-                return error InternalError(msg, message = msg);
-            }
-            self.authConfig = auth.cloneReadOnly();
-            self.authenticator = check new ("RestListenerConfiguration", auth.cloneReadOnly());
-        } else {
-            self.authConfig = ();
-            self.authenticator = ();
-        }
-        if listenTo is http:Listener {
-            self.httpListener = listenTo;
-        } else {
-            http:Listener|error created = new (listenTo, httpListenerConfigurationOf(config));
-            if created is error {
-                return wrapTransportError(created);
-            }
-            self.httpListener = created;
-        }
-        // The scheme comes from the HTTP listener itself, so it is right for a
-        // port and for an `http:Listener` passed in.
-        self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
-        self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
-        self.validateInputModes = config.validateInputModes;
-        if listenTo is http:Listener {
-            rememberSharedSettings(listenTo, self.authConfig, self.publicUrl);
-        }
+        self.transport = check new (listenTo, config, "RestListenerConfiguration", HTTP_JSON, REST_MOUNT_PATH, false,
+                newRestService);
     }
 
     # Attaches an agent's `a2a:Service`.
@@ -142,165 +89,38 @@ public isolated class RestListener {
     #            serves, the service has no agent card or two, defines an
     #            incomplete group of operations, defines
     #            the `get extendedAgentCard` resource without `auth`, or attachment fails
-    public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
-        string mountPath = check mountPathOf(name, REST_MOUNT_PATH);
-        OperationBinding binding = new (a2aService);
-        Capabilities capabilities = check capabilitiesOf(binding);
-        AgentCard supplied = check agentCardOf(a2aService, binding);
-        // Refused before anything is bound: [specification section 13.3](https://a2a-protocol.org/latest/specification/#133-extended-agent-card-access-control)
-        // says `GetExtendedAgentCard` MUST require authentication, so a
-        // service that would serve it to anyone must not start.
-        if capabilities.extendedAgentCard && self.authenticator is () {
-            string msg = "a service that defines the get extendedAgentCard resource requires RestListenerConfiguration.auth: "
-                + "the extended agent card is for authenticated callers";
-            return error InternalError(msg, message = msg);
-        }
-        ServedCards cards = new (self.authConfig, capabilities, HTTP_JSON);
-        AgentCard & readonly served = cards.publicCard(supplied).cloneReadOnly();
-        RestDispatcherService dispatcherService = new (served, binding, cards, self.authenticator,
-                self.interfaceScheme, self.publicUrl, self.streamTiming, mountPath, self.validateInputModes);
-        check addCardBinding(self.httpListener, self.interfaceScheme, served, HTTP_JSON, mountPath, self.authConfig,
-                self.publicUrl, self.validateInputModes);
-        lock {
-            self.attached.push({agentService: a2aService, dispatcher: dispatcherService, mountPath});
-        }
-        error? result = attachAt(self.httpListener, dispatcherService, mountPath);
-        if result is error {
-            self.forget(a2aService, mountPath);
-            return wrapTransportError(result);
-        }
-        log:printInfo("A2A service attached", path = "/" + mountPath, operations = binding.defined.toString());
-    }
+    public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? =>
+        self.transport.attach(a2aService, name);
 
     # Detaches the attached service.
     #
     # + a2aService - The service to detach
     # + return - An `a2a:Error` if detachment fails
-    public isolated function detach(Service a2aService) returns Error? {
-        RestDispatcherService? dispatcherService = ();
-        lock {
-            foreach int i in 0 ..< self.attached.length() {
-                if self.attached[i].agentService === a2aService {
-                    dispatcherService = self.attached[i].dispatcher;
-                    removeCardBinding(self.httpListener, self.attached[i].mountPath);
-                    _ = self.attached.remove(i);
-                    break;
-                }
-            }
-        }
-        if dispatcherService is RestDispatcherService {
-            error? result = self.httpListener.detach(dispatcherService);
-            if result is error {
-                return wrapTransportError(result);
-            }
-        }
-    }
-
-    # Undoes the bookkeeping of an attach that failed partway, so the card does
-    # not advertise an interface that serves nothing and the path can be used
-    # again.
-    #
-    # + a2aService - The service whose attach failed
-    # + mountPath - The path it was being attached at
-    private isolated function forget(Service a2aService, string mountPath) {
-        lock {
-            removeCardBinding(self.httpListener, mountPath);
-            foreach int i in 0 ..< self.attached.length() {
-                if self.attached[i].agentService === a2aService {
-                    _ = self.attached.remove(i);
-                    break;
-                }
-            }
-        }
-    }
+    public isolated function detach(Service a2aService) returns Error? => self.transport.detach(a2aService);
 
     # Starts the listener.
     #
     # + return - An `a2a:Error` if the listener could not start
-    public isolated function 'start() returns Error? {
-        error? result = self.httpListener.'start();
-        if result is error {
-            return wrapTransportError(result);
-        }
-    }
+    public isolated function 'start() returns Error? => self.transport.'start();
 
     # Stops the listener, letting in-flight requests finish.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function gracefulStop() returns Error? {
-        error? result = self.httpListener.gracefulStop();
-        if result is error {
-            return wrapTransportError(result);
-        }
-    }
+    public isolated function gracefulStop() returns Error? => self.transport.gracefulStop();
 
     # Stops the listener immediately, dropping in-flight requests.
     #
     # + return - An `a2a:Error` if the stop failed
-    public isolated function immediateStop() returns Error? {
-        error? result = self.httpListener.immediateStop();
-        if result is error {
-            return wrapTransportError(result);
-        }
-    }
+    public isolated function immediateStop() returns Error? => self.transport.immediateStop();
 }
 
-# Checks a configured public URL and puts it in the form the card serves.
-#
-# + configName - The listener configuration's type name, for error messages
-# + url - The configuration's `publicUrl`
-# + return - The URL without a trailing slash, or an `a2a:InternalError` if it
-#            is not an absolute `http://` or `https://` URL with a host and no
-#            query or fragment
-isolated function normalisePublicUrl(string configName, string url) returns string|Error {
-    string rest;
-    if url.startsWith("https://") {
-        rest = url.substring(8);
-    } else if url.startsWith("http://") {
-        rest = url.substring(7);
-    } else {
-        return invalidPublicUrl(configName, url, "it must start with http:// or https://");
-    }
-    if url.includes("?") || url.includes("#") {
-        return invalidPublicUrl(configName, url, "it must not have a query or a fragment");
-    }
-    int? slash = rest.indexOf("/");
-    string host = slash is int ? rest.substring(0, slash) : rest;
-    if host == "" {
-        return invalidPublicUrl(configName, url, "it has no host");
-    }
-    return stripTrailingSlash(url);
-}
+# Builds the dispatcher that serves a service over HTTP+JSON.
+isolated function newRestService(AgentCard served, OperationBinding binding, ServedCards cards,
+        ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl, StreamTiming streamTiming,
+        string mountPath, boolean validateInputModes) returns http:Service =>
+    new RestDispatcherService(served, binding, cards, authenticator, interfaceScheme, publicUrl,
+            streamTiming, mountPath, validateInputModes);
 
-# Checks the configured stream timing, which is in seconds and so cannot be
-# negative.
-#
-# + configName - The configuration record's name, for the message
-# + idleTimeout - `streamIdleTimeout`
-# + keepAliveInterval - `keepAliveInterval`
-# + return - An `a2a:InternalError` naming the first negative field
-isolated function checkStreamTiming(string configName, decimal idleTimeout, decimal keepAliveInterval) returns Error? {
-    string? negative = idleTimeout < 0d ? "streamIdleTimeout" : keepAliveInterval < 0d ? "keepAliveInterval" : ();
-    if negative is string {
-        string msg = string `${configName}.${negative} must not be negative; use 0 to turn it off`;
-        return error InternalError(msg, message = msg);
-    }
-}
-
-isolated function invalidPublicUrl(string configName, string url, string reason) returns Error {
-    string msg = string `${configName}.publicUrl "${url}" is not usable: ${reason}`;
-    return error InternalError(msg, message = msg);
-}
-
-# A service attached to a listener, with the dispatcher built for it.
-type AttachedService record {|
-    # The service, as the application declared it
-    Service agentService;
-    # The dispatcher built for it
-    RestDispatcherService dispatcher;
-    # The path it is mounted at
-    string mountPath;
-|};
 
 # The path the HTTP+JSON binding is served at when a service is declared without one.
 const string REST_MOUNT_PATH = "rest";

@@ -143,11 +143,13 @@ isolated function withoutInterfaces(AgentCard card) returns AgentCard {
 // interface, and the last one to detach releases them.
 isolated [http:Listener, CardRegistry, CardService][] sharedCardStates = [];
 
-# The `auth` and `publicUrl` of the first A2A listener built on an `http:Listener`. A listener built later on the same
-# `http:Listener` that sets neither takes them, since the listeners publish one card and must agree on both. Only a
+# The `auth`, `publicUrl` and authenticator of the first A2A listener built on an `http:Listener`. A listener built later
+# on the same `http:Listener` that sets neither `auth` nor `publicUrl` takes them, since the listeners publish one card
+# and must agree on both, and one with the same `auth` shares the authenticator, so an identity provider is asked once
+# and not once per binding. Only a
 # listener built on an `http:Listener` of the application's own is recorded: one that makes its own has nobody to share
 # it with.
-isolated [http:Listener, ReadonlyAuth, string?][] sharedListenerSettings = [];
+isolated [http:Listener, ReadonlyAuth, string?, ListenerAuthenticator?][] sharedListenerSettings = [];
 
 # A listener's `auth`, frozen.
 type ReadonlyAuth (http:ListenerAuthConfig[] & readonly)?;
@@ -161,25 +163,31 @@ type ReadonlyAuth (http:ListenerAuthConfig[] & readonly)?;
 # + listenTo - What the listener is built on
 # + auth - The `auth` the listener was given, if any
 # + publicUrl - The `publicUrl` the listener was given, if any
-# + return - The `auth` and the `publicUrl` the listener is built with
+# + return - The `auth` and the `publicUrl` the listener is built with, and the earlier listener's authenticator when its
+#            `auth` is the one the listener is built with
 isolated function inheritedSettings(int|http:Listener listenTo, http:ListenerAuthConfig[]? auth, string? publicUrl)
-        returns [http:ListenerAuthConfig[]?, string?] {
-    if listenTo is http:Listener && (auth is () || publicUrl is ()) {
+        returns [http:ListenerAuthConfig[]?, string?, ListenerAuthenticator?] {
+    if listenTo is http:Listener {
         ReadonlyAuth earlierAuth = ();
         string? earlierPublicUrl = ();
+        ListenerAuthenticator? earlierAuthenticator = ();
         lock {
-            foreach [http:Listener, (http:ListenerAuthConfig[] & readonly)?, string?] [existing, existingAuth,
-                    existingPublicUrl] in sharedListenerSettings {
+            foreach [http:Listener, ReadonlyAuth, string?, ListenerAuthenticator?] [existing, existingAuth,
+                    existingPublicUrl, existingAuthenticator] in sharedListenerSettings {
                 if existing === listenTo {
                     earlierAuth = existingAuth;
                     earlierPublicUrl = existingPublicUrl;
+                    earlierAuthenticator = existingAuthenticator;
                     break;
                 }
             }
         }
-        return [auth ?: earlierAuth, publicUrl ?: earlierPublicUrl];
+        http:ListenerAuthConfig[]? effectiveAuth = auth ?: earlierAuth;
+        // The authenticator belongs to the `auth` it was built from, so it is shared only when that is the `auth` in use.
+        ListenerAuthenticator? shared = effectiveAuth == earlierAuth ? earlierAuthenticator : ();
+        return [effectiveAuth, publicUrl ?: earlierPublicUrl, shared];
     }
-    return [auth, publicUrl];
+    return [auth, publicUrl, ()];
 }
 
 # Records the settings of a listener built on an `http:Listener`, unless an earlier one already did.
@@ -187,16 +195,17 @@ isolated function inheritedSettings(int|http:Listener listenTo, http:ListenerAut
 # + httpListener - The listener the A2A listener was built on
 # + auth - The `auth` the listener was built with
 # + publicUrl - The normalised `publicUrl` the listener was built with
+# + authenticator - The authenticator built from `auth`, if any
 isolated function rememberSharedSettings(http:Listener httpListener, (http:ListenerAuthConfig[] & readonly)? auth,
-        string? publicUrl) {
+        string? publicUrl, ListenerAuthenticator? authenticator) {
     lock {
-        foreach [http:Listener, (http:ListenerAuthConfig[] & readonly)?, string?] [existing, _, _] in
+        foreach [http:Listener, ReadonlyAuth, string?, ListenerAuthenticator?] [existing, _, _, _] in
                 sharedListenerSettings {
             if existing === httpListener {
                 return;
             }
         }
-        sharedListenerSettings.push([httpListener, auth, publicUrl]);
+        sharedListenerSettings.push([httpListener, auth, publicUrl, authenticator]);
     }
 }
 
