@@ -85,7 +85,11 @@ public isolated class RestListener {
     #            cannot be reached)
     public isolated function init(int|http:Listener listenTo, *RestListenerConfiguration config) returns Error? {
         check checkStreamTiming("RestListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
-        string? publicUrl = config.publicUrl;
+        // A listener built on an `http:Listener` that an earlier A2A listener was built on takes that one's `auth`
+        // and `publicUrl` when it sets none, so only a real conflict is an error.
+        var inherited = inheritedSettings(listenTo, config.auth, config.publicUrl);
+        http:ListenerAuthConfig[]? inheritedAuth = inherited[0];
+        string? publicUrl = inherited[1];
         if publicUrl is string {
             self.publicUrl = check normalisePublicUrl("RestListenerConfiguration", publicUrl);
         } else {
@@ -95,7 +99,7 @@ public isolated class RestListener {
         // of them reach the identity provider while being built (a JWKS cache is
         // preloaded, an LDAP server is connected to), so a listener that cannot
         // reach it must fail before anything is bound.
-        http:ListenerAuthConfig[]? auth = config.auth;
+        http:ListenerAuthConfig[]? auth = inheritedAuth;
         if auth is http:ListenerAuthConfig[] {
             if auth.length() == 0 {
                 string msg = "RestListenerConfiguration.auth must contain at least one entry; "
@@ -122,6 +126,9 @@ public isolated class RestListener {
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
         self.validateInputModes = config.validateInputModes;
+        if listenTo is http:Listener {
+            rememberSharedSettings(listenTo, self.authConfig, self.publicUrl);
+        }
     }
 
     # Attaches an agent's `a2a:Service`.

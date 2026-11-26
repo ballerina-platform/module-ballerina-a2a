@@ -135,6 +135,63 @@ isolated function withoutInterfaces(AgentCard card) returns AgentCard {
 // interface, and the last one to detach releases them.
 isolated [http:Listener, CardRegistry, CardService][] sharedCardStates = [];
 
+# The `auth` and `publicUrl` of the first A2A listener built on an `http:Listener`. A listener built later on the same
+# `http:Listener` that sets neither takes them, since the listeners publish one card and must agree on both. Only a
+# listener built on an `http:Listener` of the application's own is recorded: one that makes its own has nobody to share
+# it with.
+isolated [http:Listener, ReadonlyAuth, string?][] sharedListenerSettings = [];
+
+# A listener's `auth`, frozen.
+type ReadonlyAuth (http:ListenerAuthConfig[] & readonly)?;
+
+# What a listener built on `listenTo` is configured with once the settings it leaves unset are taken from the listener
+# before it.
+#
+# Only the listener built later inherits. One built first without `auth`, followed by one with it, is still refused when
+# the second attaches: a service must not end up without the authentication its card was said to have.
+#
+# + listenTo - What the listener is built on
+# + auth - The `auth` the listener was given, if any
+# + publicUrl - The `publicUrl` the listener was given, if any
+# + return - The `auth` and the `publicUrl` the listener is built with
+isolated function inheritedSettings(int|http:Listener listenTo, http:ListenerAuthConfig[]? auth, string? publicUrl)
+        returns [http:ListenerAuthConfig[]?, string?] {
+    if listenTo is http:Listener && (auth is () || publicUrl is ()) {
+        ReadonlyAuth earlierAuth = ();
+        string? earlierPublicUrl = ();
+        lock {
+            foreach [http:Listener, (http:ListenerAuthConfig[] & readonly)?, string?] [existing, existingAuth,
+                    existingPublicUrl] in sharedListenerSettings {
+                if existing === listenTo {
+                    earlierAuth = existingAuth;
+                    earlierPublicUrl = existingPublicUrl;
+                    break;
+                }
+            }
+        }
+        return [auth ?: earlierAuth, publicUrl ?: earlierPublicUrl];
+    }
+    return [auth, publicUrl];
+}
+
+# Records the settings of a listener built on an `http:Listener`, unless an earlier one already did.
+#
+# + httpListener - The listener the A2A listener was built on
+# + auth - The `auth` the listener was built with
+# + publicUrl - The normalised `publicUrl` the listener was built with
+isolated function rememberSharedSettings(http:Listener httpListener, (http:ListenerAuthConfig[] & readonly)? auth,
+        string? publicUrl) {
+    lock {
+        foreach [http:Listener, (http:ListenerAuthConfig[] & readonly)?, string?] [existing, _, _] in
+                sharedListenerSettings {
+            if existing === httpListener {
+                return;
+            }
+        }
+        sharedListenerSettings.push([httpListener, auth, publicUrl]);
+    }
+}
+
 # Adds an interface to the card served on an `http:Listener`, creating the card
 # state and mounting its card service when it is the first.
 #
@@ -183,6 +240,7 @@ isolated function addCardBinding(http:Listener httpListener, string interfaceSch
 # + httpListener - The listener the cards are served on
 # + mountPath - The interface's mount path
 isolated function removeCardBinding(http:Listener httpListener, string mountPath) {
+    boolean released = false;
     lock {
         foreach int i in 0 ..< sharedCardStates.length() {
             [http:Listener, CardRegistry, CardService] [existingListener, registry, cardService] =
@@ -197,9 +255,28 @@ isolated function removeCardBinding(http:Listener httpListener, string mountPath
                     log:printWarn("could not detach the agent card service", 'error = detached);
                 } else {
                     _ = sharedCardStates.remove(i);
+                    released = true;
                 }
             }
-            return;
+            break;
+        }
+    }
+    if released {
+        // Nothing is published on it any more, so what the next listener leaves unset is its own.
+        forgetSharedSettings(httpListener);
+    }
+}
+
+# Forgets the settings recorded for an `http:Listener`.
+#
+# + httpListener - The listener nothing is published on any more
+isolated function forgetSharedSettings(http:Listener httpListener) {
+    lock {
+        foreach int i in 0 ..< sharedListenerSettings.length() {
+            if sharedListenerSettings[i][0] === httpListener {
+                _ = sharedListenerSettings.remove(i);
+                break;
+            }
         }
     }
 }

@@ -354,15 +354,18 @@ function testARestAndAJsonRpcListenerOnOneHttpListenerShareACard() returns error
 // authentication for a binding that does none.
 @test:Config {}
 function testListenersSharingACardMustShareTheirAuth() returns error? {
+    // The listener built later takes the earlier one's `auth` when it sets none (see shared_listener_settings_test.bal).
+    // The other order is a conflict: a listener built first without `auth` would otherwise be served without the
+    // authentication the card says the agent has.
     http:Listener shared = check new (19318);
-    RestListener restListener = check new (shared, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
     JsonRpcListener rpcListener = check new (shared);
+    RestListener restListener = check new (shared, auth = [{jwtValidatorConfig: authTestJwtValidator}]);
     AgentCard securedCard = {...rpcTestCard};
     securedCard.securitySchemes = {"bearer": <HttpAuthSecurityScheme>{scheme: "Bearer"}};
     securedCard.securityRequirements = [{"bearer": []}];
     DefaultHandler handler = new (new CountingAgent());
-    check restListener.attach(new FullService(handler, securedCard));
-    error? rejected = rpcListener.attach(new RpcService(handler, securedCard));
+    check rpcListener.attach(new RpcService(handler, securedCard));
+    error? rejected = restListener.attach(new FullService(handler, securedCard));
     test:assertTrue(rejected is InternalError, "a binding without the other's auth must not share its card");
     test:assertTrue((<error>rejected).message().includes("the same `auth`"), (<error>rejected).message());
 }

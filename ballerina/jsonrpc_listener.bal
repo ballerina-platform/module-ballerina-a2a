@@ -86,13 +86,17 @@ public isolated class JsonRpcListener {
     #            entry cannot be initialised
     public isolated function init(int|http:Listener listenTo, *JsonRpcListenerConfiguration config) returns Error? {
         check checkStreamTiming("JsonRpcListenerConfiguration", config.streamIdleTimeout, config.keepAliveInterval);
-        string? publicUrl = config.publicUrl;
+        // A listener built on an `http:Listener` that an earlier A2A listener was built on takes that one's `auth`
+        // and `publicUrl` when it sets none, so only a real conflict is an error.
+        var inherited = inheritedSettings(listenTo, config.auth, config.publicUrl);
+        http:ListenerAuthConfig[]? inheritedAuth = inherited[0];
+        string? publicUrl = inherited[1];
         if publicUrl is string {
             self.publicUrl = check normalisePublicUrl("JsonRpcListenerConfiguration", publicUrl);
         } else {
             self.publicUrl = ();
         }
-        http:ListenerAuthConfig[]? auth = config.auth;
+        http:ListenerAuthConfig[]? auth = inheritedAuth;
         if auth is http:ListenerAuthConfig[] {
             if auth.length() == 0 {
                 string msg = "JsonRpcListenerConfiguration.auth must contain at least one entry; "
@@ -117,6 +121,9 @@ public isolated class JsonRpcListener {
         self.interfaceScheme = self.httpListener.getConfig().secureSocket is () ? "http" : "https";
         self.streamTiming = {idleTimeout: config.streamIdleTimeout, keepAliveInterval: config.keepAliveInterval};
         self.validateInputModes = config.validateInputModes;
+        if listenTo is http:Listener {
+            rememberSharedSettings(listenTo, self.authConfig, self.publicUrl);
+        }
     }
 
     # Attaches an agent's `a2a:Service`.

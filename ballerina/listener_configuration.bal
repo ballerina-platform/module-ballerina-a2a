@@ -58,7 +58,11 @@ public type ListenerConfiguration record {|
     # Declare them yourself -- for example an `openIdConnect` scheme with your
     # provider's discovery URL -- and nothing is derived.
     #
-    # Applies whether `listenTo` is a port or an existing `http:Listener`.
+    # Applies whether `listenTo` is a port or an existing `http:Listener`. A
+    # listener built on an `http:Listener` that another A2A listener was built
+    # on, and that sets no `auth`, takes that listener's: the two publish one
+    # card. Unset on the one built first and set on the one built after is an
+    # error when the second attaches.
     http:ListenerAuthConfig[]? auth = ();
     # Seconds a live `sendStreamingMessage`/`subscribeToTask` stream may sit
     # idle — no event, from a task still being driven — before the server
@@ -97,6 +101,10 @@ public type ListenerConfiguration record {|
     # trailing `/` is dropped. `X-Forwarded-*` headers are deliberately not
     # consulted: any caller can send them, and this setting is the explicit
     # answer.
+    #
+    # A listener built on an `http:Listener` that another A2A listener was built
+    # on, and that sets no `publicUrl`, takes that listener's: the two publish one
+    # card. Two that set different ones are an error when the second attaches.
     string? publicUrl = ();
     # Whether `sendMessage` and `sendStreamingMessage` answer
     # `ContentTypeNotSupportedError` (an HTTP 400 over HTTP+JSON, a JSON-RPC
