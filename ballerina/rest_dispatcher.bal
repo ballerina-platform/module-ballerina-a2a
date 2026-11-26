@@ -842,7 +842,7 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
 
 # The URL the served card gives clients for this listener.
 #
-# + publicUrl - `RestListenerConfiguration.publicUrl`, already normalised, if set
+# + publicUrl - `ListenerConfiguration.publicUrl`, already normalised, if set
 # + scheme - `http` or `https`, from what the HTTP listener really serves
 # + host - The request's `Host` header
 # + return - The public URL when configured, otherwise `scheme://host`

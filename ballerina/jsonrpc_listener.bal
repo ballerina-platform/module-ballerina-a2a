@@ -26,10 +26,10 @@ import ballerina/log;
 # The path the JSON-RPC binding is served at when a service is declared without one.
 const string JSON_RPC_MOUNT_PATH = "rpc";
 
-# Configuration for an `a2a:JsonRpcListener`: the same as for an
-# `a2a:RestListener`, since both put an HTTP listener in front of the agent.
+# Configuration for an `a2a:JsonRpcListener`: how requests reach the agent. Every field is in
+# `a2a:ListenerConfiguration`, which `a2a:RestListenerConfiguration` includes as well.
 public type JsonRpcListenerConfiguration record {|
-    *RestListenerConfiguration;
+    *ListenerConfiguration;
 |};
 
 # Serves `a2a:Service`s over JSON-RPC 2.0: the JSON-RPC binding, at `/rpc` unless the

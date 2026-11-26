@@ -123,3 +123,15 @@ function testListenerRefusesANegativeKeepAliveInterval() {
 function testListenerAcceptsZeroStreamTimings() returns error? {
     RestListener _ = check new (19315, streamIdleTimeout = 0, keepAliveInterval = 0);
 }
+
+// Both listeners take the one configuration, so a field means the same for either.
+@test:Config {}
+function testBothListenerConfigurationsAreTheSharedOne() {
+    RestListenerConfiguration rest = {publicUrl: "https://agents.example.com/travel", keepAliveInterval: 5};
+    JsonRpcListenerConfiguration rpc = {publicUrl: "https://agents.example.com/travel", keepAliveInterval: 5};
+    ListenerConfiguration shared = rest;
+    ListenerConfiguration alsoShared = rpc;
+    test:assertEquals(shared, alsoShared);
+    test:assertEquals(rest.streamIdleTimeout, 300d);
+    test:assertEquals(rpc.validateInputModes, false);
+}
