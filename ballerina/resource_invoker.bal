@@ -67,3 +67,14 @@ isolated function invokeRemoteFunction(service object {} 'service, string name, 
     'class: "io.ballerina.lib.a2a.nativeimpl.ResourceInvoker",
     name: "invokeRemote"
 } external;
+
+# Checks the signatures of a service's remote functions against what each A2A method takes and returns.
+#
+# + service - The user's service
+# + expected - Each method's name mapped to the request and result types it has
+# + return - One description per function that is a known method and is mistyped
+isolated function checkRemoteFunctionSignatures(service object {} 'service, map<ExpectedSignature> expected)
+        returns string[] = @java:Method {
+    'class: "io.ballerina.lib.a2a.nativeimpl.ResourceInvoker",
+    name: "checkRemoteSignatures"
+} external;

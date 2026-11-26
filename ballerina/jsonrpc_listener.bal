@@ -140,6 +140,13 @@ public isolated class JsonRpcListener {
     public isolated function attach(Service a2aService, string[]|string? name = ()) returns Error? {
         string mountPath = check mountPathOf(name, JSON_RPC_MOUNT_PATH);
         OperationBinding binding = new (a2aService, byMethodName = true);
+        // Before anything that would say a method is missing: a typo is why it is missing, and that is the useful
+        // thing to report.
+        if binding.problems.length() > 0 {
+            string msg = "an a2a:Service attached to a JsonRpcListener has remote functions that cannot serve an A2A "
+                + string `method: ${string:'join("; ", ...binding.problems)}`;
+            return error InternalError(msg, message = msg);
+        }
         Capabilities capabilities = check capabilitiesOf(binding);
         AgentCard supplied = check agentCardOf(a2aService, binding);
         // Specification section 13.3: `GetExtendedAgentCard` MUST require
