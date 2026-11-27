@@ -215,6 +215,68 @@ isolated function wrapTransportError(error e) returns Error {
     return error InternalError(msg, message = msg);
 }
 
+# A stream whose connection failed before the agent ended it. It is an `InternalError` to a caller, as every
+# transport failure is, but reconnection tells it apart from an error the agent sent as a frame of the stream, which
+# ends the stream and is the caller's to handle.
+type StreamDroppedError distinct InternalError;
+
+# Types a failure of the connection a stream was read from.
+#
+# + e - The error the HTTP layer raised while reading the stream
+# + return - `e` unchanged if it was already an `a2a:Error`, otherwise a `StreamDroppedError` carrying its message
+isolated function streamDropped(error e) returns Error {
+    if e is Error {
+        return e;
+    }
+    string msg = string `Transport-level failure: ${e.message()}`;
+    return error StreamDroppedError(msg, message = msg);
+}
+
+# Maps the `error` object of a JSON-RPC response onto the same Error hierarchy
+# the REST binding maps onto, so callers handle errors identically whichever
+# binding their client negotiated. The JSON-RPC `code` is the discriminator:
+# specification section 5.4 gives every A2A error its own code, and the
+# standard JSON-RPC codes (-32700 to -32603) are kept as the `code` of an
+# `InternalError`.
+#
+# + code - The error object's `code`
+# + message - The error object's `message`
+# + data - The error object's `data`, the google.rpc details when the agent
+#          sent them
+# + return - The corresponding typed Error
+isolated function toA2AErrorFromJsonRpc(int code, string message, json? data = ()) returns Error {
+    match code {
+        -32001 => {
+            return error TaskNotFoundError(message, message = message, code = code, data = data);
+        }
+        -32002 => {
+            return error TaskNotCancelableError(message, message = message, code = code, data = data);
+        }
+        -32003 => {
+            return error PushNotificationNotSupportedError(message, message = message, code = code, data = data);
+        }
+        -32004 => {
+            return error UnsupportedOperationError(message, message = message, code = code, data = data);
+        }
+        -32005 => {
+            return error ContentTypeNotSupportedError(message, message = message, code = code, data = data);
+        }
+        -32006 => {
+            return error InvalidAgentResponseError(message, message = message, code = code, data = data);
+        }
+        -32007 => {
+            return error ExtendedAgentCardNotConfiguredError(message, message = message, code = code, data = data);
+        }
+        -32008 => {
+            return error ExtensionSupportRequiredError(message, message = message, code = code, data = data);
+        }
+        -32009 => {
+            return error VersionNotSupportedError(message, message = message, code = code, data = data);
+        }
+    }
+    return error InternalError(message, message = message, code = code, data = data);
+}
+
 # Maps a REST binding error response onto the same Error hierarchy the
 # JSON-RPC binding maps onto, so callers handle errors identically
 # regardless of which binding their Client negotiated. HTTP status alone

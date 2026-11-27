@@ -414,7 +414,7 @@ public type ClientConfiguration record {|
 # Each method's `+ return` names the `a2a:Error` subtype a protocol failure
 # produces; a transport or decode failure comes back as `a2a:InternalError`.
 public isolated client class RestClient {
-    *Client;
+    *ClientOperations;
 
     private final http:Client httpClient;
     private final map<string> & readonly defaultHeaders;
@@ -456,7 +456,7 @@ public isolated client class RestClient {
         string serviceUrl = check primaryUrl(card, HTTP_JSON);
         string? effectiveTenant = config.tenant;
         if effectiveTenant is () {
-            AgentInterface|error iface = selectInterface(card, HTTP_JSON);
+            AgentInterface|error iface = selectV1Interface(card, HTTP_JSON);
             if iface is AgentInterface {
                 effectiveTenant = iface?.tenant;
             }
