@@ -69,27 +69,33 @@ function testServiceWithoutConfigHasNone() {
             authTestCard)) is ());
 }
 
-// ---- the path names the binding -------------------------------------------
+// ---- the path a service is served at ------------------------------------
 
 @test:Config {}
-function testRestPathNamesTheRestBinding() returns error? {
-    test:assertEquals(check mountPathOf(["rest"]), "rest");
-    test:assertEquals(check mountPathOf("rest"), "rest");
-    test:assertEquals(check mountPathOf("/rest"), "rest");
+function testAServiceDeclaredWithoutAPathIsServedAtTheBindingsDefault() returns error? {
+    test:assertEquals(check mountPathOf((), "rest"), "rest");
+    test:assertEquals(check mountPathOf((), "rpc"), "rpc");
 }
 
 @test:Config {}
-function testOnlyTheRestPathIsServedAndTheOthersAreRefused() {
-    string|Error rpc = mountPathOf(["rpc"]);
-    test:assertTrue(rpc is InternalError);
-    test:assertTrue((<Error>rpc).message().includes("/rest"), (<Error>rpc).message());
+function testAServiceIsServedAtThePathItIsDeclaredAt() returns error? {
+    test:assertEquals(check mountPathOf(["rest"], "rpc"), "rest");
+    test:assertEquals(check mountPathOf("/agents/travel", "rest"), "agents/travel");
+    test:assertEquals(check mountPathOf(["agents", "travel"], "rest"), "agents/travel");
+    test:assertEquals(check mountPathOf(["a2a"], "rest"), "a2a");
+}
 
-    string|Error unknown = mountPathOf(["weather"]);
-    test:assertTrue(unknown is InternalError);
-    test:assertTrue((<Error>unknown).message().includes("/rest"), (<Error>unknown).message());
+@test:Config {}
+function testAServiceDeclaredAtTheRootIsServedAtTheRoot() returns error? {
+    // `service / on listener` reaches attach as an empty array, and `service on listener` as nothing.
+    test:assertEquals(check mountPathOf([], "rest"), "");
+    test:assertEquals(check mountPathOf("/", "rest"), "");
+}
 
-    test:assertEquals(mountPathOf(()), "rest", "a service is declared without a path");
-    test:assertEquals(mountPathOf(["rest"]), "rest");
+@test:Config {}
+function testAPathSegmentThatIsEmptyOrHoldsASlashIsRefused() {
+    test:assertTrue(mountPathOf(["a", ""], "rest") is InternalError);
+    test:assertTrue(mountPathOf(["a/b"], "rest") is InternalError);
 }
 
 // ---- attach rules ---------------------------------------------------------
@@ -99,21 +105,11 @@ isolated function attachRulesListener() returns RestListener|error => new (ATTAC
 isolated function attachRulesHandler() returns DefaultHandler => new (new CountingAgent());
 
 @test:Config {}
-function testAttachRefusesAPathOtherThanRestWithoutServingAnything() returns error? {
-    RestListener agentListener = check attachRulesListener();
-    error? rejected = agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rpc");
-    test:assertTrue(rejected is InternalError, "a RestListener serves /rest only: attaching /rpc must fail");
-    test:assertTrue((<error>rejected).message().includes("/rest"), (<error>rejected).message());
-    // The refused attach must not have used up the path.
-    check agentListener.attach(new FullService(attachRulesHandler(), authTestCard), "rest");
-}
-
-@test:Config {}
 function testAttachRefusesAServiceWithoutSendMessage() returns error? {
     RestListener agentListener = check attachRulesListener();
     error? rejected = agentListener.attach(new GetTaskOnlyService(attachRulesHandler(), authTestCard), "rest");
     test:assertTrue(rejected is InternalError);
-    test:assertTrue((<error>rejected).message().includes("message\\:send"), (<error>rejected).message());
+    test:assertTrue((<error>rejected).message().includes("message:send"), (<error>rejected).message());
 }
 
 @test:Config {}

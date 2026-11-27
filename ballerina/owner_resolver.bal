@@ -69,9 +69,9 @@ public type Context record {|
 # against a directory. This resolves identity; it does not authenticate it.
 # A resolver that trusts an unverified header is not a security boundary,
 # and satisfying [specification section 13.1](https://a2a-protocol.org/latest/specification/#131-data-access-and-authorization-scoping) requires
-# pairing this with real inbound authentication: configure
-# `RestListenerConfiguration.auth`. A resolver can link accounts across
-# authorities on purpose, for example by returning `identity` alone.
+# pairing this with real inbound authentication: configure `auth` on the
+# listener. A resolver can link accounts across authorities on purpose, for
+# example by returning `identity` alone.
 public type TaskOwnerResolver isolated object {
 
     # Resolves the request's caller to an owner scope.

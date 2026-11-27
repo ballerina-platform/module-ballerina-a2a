@@ -39,7 +39,6 @@
 
 import ballerina/http;
 import ballerina/log;
-import ballerina/time;
 
 # The A2A protocol version this server implements.
 const A2A_PROTOCOL_VERSION = "1.0";
@@ -224,7 +223,7 @@ isolated service class RestDispatcherService {
         // InvalidAgentResponseError, which is for an agent's own malformed
         // response and is a 500.
         if tenant is string {
-            string? declared = declaredTenant(self.card);
+            string? declared = declaredTenant(self.card, HTTP_JSON);
             if declared is () || declared != tenant {
                 return toRestErrorResponse(invalidParams(
                         string `request routed under tenant "${tenant}", which the agent does not serve`));
@@ -260,7 +259,8 @@ isolated service class RestDispatcherService {
         if host !is string && publicUrl is () {
             return card;
         }
-        string url = interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : "") + "/" + self.mountPath;
+        string url = interfaceUrlAt(interfaceUrlFor(publicUrl, self.interfaceScheme, host is string ? host : ""),
+                self.mountPath);
         // `card` is readonly, so round-trip through JSON for a fresh mutable
         // copy, then fill the HTTP+JSON interface's URL. `deriveServedCard`
         // put a single such entry there, on both the public and extended
@@ -293,14 +293,7 @@ isolated service class RestDispatcherService {
     # + req - The HTTP request
     # + return - A VersionNotSupportedError when the version is unsupported
     private isolated function checkVersion(http:Request req) returns Error? {
-        string|http:HeaderNotFoundError header = req.getHeader("A2A-Version");
-        string version = header is string ? header : "0.3";
-        if majorMinor(version) != A2A_PROTOCOL_VERSION {
-            string msg = string `A2A protocol version ${version} is not supported; `
-                + string `this interface serves v1.0`;
-            return error VersionNotSupportedError(msg, message = msg);
-        }
-        return;
+        return checkVersionHeader(req);
     }
 
     # Rejects a request that omits a required extension.
@@ -317,28 +310,7 @@ isolated service class RestDispatcherService {
     # + return - An ExtensionSupportRequiredError naming the first
     #            undeclared required extension, or `()`
     private isolated function checkExtensions(http:Request req) returns Error? {
-        AgentExtension[] extensions = self.card.capabilities.extensions ?: [];
-        boolean anyRequired = extensions.some(ext => ext.required);
-        if !anyRequired {
-            return;
-        }
-
-        string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
-        string[] declared = [];
-        if header is string {
-            foreach string uri in re `,`.split(header) {
-                declared.push(uri.trim());
-            }
-        }
-
-        foreach AgentExtension ext in extensions {
-            string? uri = ext.uri;
-            if ext.required && uri is string && declared.indexOf(uri) is () {
-                string msg = string `extension ${uri} is required but was not declared `
-                    + "in the A2A-Extensions header";
-                return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
-            }
-        }
+        return checkRequiredExtensions(self.card, req);
     }
 
     # Runs one operation for an admitted request.
@@ -695,10 +667,11 @@ isolated function logAuthFailure(AuthFailure failure, string method, string path
 # Reads the tenant a card declares on its HTTP+JSON interface, or `()`.
 #
 # + card - The agent card
+# + protocolBinding - The binding whose interface is read
 # + return - The declared tenant, or `()` if the interface declares none
-isolated function declaredTenant(AgentCard card) returns string? {
+isolated function declaredTenant(AgentCard card, string protocolBinding) returns string? {
     foreach AgentInterface iface in card.supportedInterfaces {
-        if iface.protocolBinding == HTTP_JSON {
+        if iface.protocolBinding == protocolBinding {
             return iface?.tenant;
         }
     }
@@ -754,10 +727,20 @@ const int AGENT_CARD_CACHE_MAX_AGE_SECONDS = 300;
 # + return - The HTTP response carrying it
 isolated function cardHttpResponse(AgentCard card, boolean authenticated = false) returns http:Response {
     http:Response response = jsonResponse(encodeAgentCardForWire(card));
+    setCardCaching(response, card.version, authenticated);
+    return response;
+}
+
+# Sets the caching headers of a response that carries an Agent Card, whichever
+# binding serves it.
+#
+# + response - The response
+# + version - The card's `version`, which is its `ETag`
+# + authenticated - Whether this is the extended card, which is `private`
+isolated function setCardCaching(http:Response response, string version, boolean authenticated) {
     string scope = authenticated ? "private, " : "";
     response.setHeader("Cache-Control", string `${scope}max-age=${AGENT_CARD_CACHE_MAX_AGE_SECONDS}`);
-    response.setHeader("ETag", string `"${card.version}"`);
-    return response;
+    response.setHeader("ETag", string `"${version}"`);
 }
 
 # Reads an integer query parameter.
@@ -804,7 +787,9 @@ isolated function majorMinor(string version) returns string {
 # Every value present is validated at the wire level here -- an
 # unrecognized `status`, or a `pageSize`/`historyLength` that doesn't parse
 # as an integer, is refused with `InvalidParams` (400) rather than silently
-# dropped, per specification section 6.5's own validation example. Range
+# dropped, per specification section 6.5's own validation example. The checks
+# of a value that the request type cannot make (a timestamp) are shared with
+# the other bindings, in `validateListTasksRequest`. Range
 # checks that depend on interpreting an already-well-formed value against
 # domain rules -- `pageSize` outside 1..100 (section 3.1.4), and whether a
 # `pageToken` names a real cursor -- are the store's job instead
@@ -842,11 +827,6 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
     }
     string? after = req.getQueryParamValue("statusTimestampAfter");
     if after is string {
-        time:Utc|error parsed = time:utcFromString(after);
-        if parsed is error {
-            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`,
-                "statusTimestampAfter");
-        }
         filter.statusTimestampAfter = after;
     }
     string? includeArtifacts = req.getQueryParamValue("includeArtifacts");
@@ -856,12 +836,13 @@ isolated function queryToListFilter(http:Request req) returns ListTasksRequest|E
         }
         filter.includeArtifacts = includeArtifacts == "true";
     }
+    check validateListTasksRequest(filter);
     return filter;
 }
 
 # The URL the served card gives clients for this listener.
 #
-# + publicUrl - `RestListenerConfiguration.publicUrl`, already normalised, if set
+# + publicUrl - `ListenerConfiguration.publicUrl`, already normalised, if set
 # + scheme - `http` or `https`, from what the HTTP listener really serves
 # + host - The request's `Host` header
 # + return - The public URL when configured, otherwise `scheme://host`
@@ -899,4 +880,51 @@ isolated function callerContextOf(http:Request req, AuthenticatedCaller? caller,
         context.tenant = tenant;
     }
     return context;
+}
+
+# Rejects a request whose A2A-Version header names anything but 1.0, by
+# Major.Minor; an absent header means 0.3. Shared by every binding, since the
+# header is an HTTP-level requirement of the protocol, not of one binding.
+#
+# + req - The HTTP request
+# + return - A VersionNotSupportedError when the version is unsupported
+isolated function checkVersionHeader(http:Request req) returns Error? {
+    string|http:HeaderNotFoundError header = req.getHeader("A2A-Version");
+    string version = header is string ? header : "0.3";
+    if majorMinor(version) != A2A_PROTOCOL_VERSION {
+        string msg = string `A2A protocol version ${version} is not supported; `
+            + string `this interface serves v1.0`;
+        return error VersionNotSupportedError(msg, message = msg);
+    }
+    return;
+}
+
+# Rejects a request that omits an extension the card declares required.
+#
+# + card - The served card
+# + req - The HTTP request
+# + return - An ExtensionSupportRequiredError naming the first undeclared required extension, or `()`
+isolated function checkRequiredExtensions(AgentCard card, http:Request req) returns Error? {
+    AgentExtension[] extensions = card.capabilities.extensions ?: [];
+    boolean anyRequired = extensions.some(ext => ext.required);
+    if !anyRequired {
+        return;
+    }
+
+    string|http:HeaderNotFoundError header = req.getHeader("A2A-Extensions");
+    string[] declared = [];
+    if header is string {
+        foreach string uri in re `,`.split(header) {
+            declared.push(uri.trim());
+        }
+    }
+
+    foreach AgentExtension ext in extensions {
+        string? uri = ext.uri;
+        if ext.required && uri is string && declared.indexOf(uri) is () {
+            string msg = string `extension ${uri} is required but was not declared `
+                + "in the A2A-Extensions header";
+            return error ExtensionSupportRequiredError(msg, message = msg, code = -32008);
+        }
+    }
 }

@@ -23,6 +23,8 @@
 // with `invalidRequest`, never with `InvalidAgentResponseError` (a 500, and
 // the agent's fault) as this path used to.
 
+import ballerina/time;
+
 # Decodes the body of a `sendMessage` or `sendStreamingMessage` request.
 #
 # File bytes arrive as base64 in `Part.raw`; they are decoded to `byte[]`
@@ -163,7 +165,7 @@ isolated function checkMessagePartVariants(json payload) returns Error? {
 # + payload - The request's parsed JSON body, or the error parsing it raised
 # + taskId - The parent task id, from the path
 # + return - The typed config, or an `invalidRequest` error
-isolated function decodePushConfigRequest(json|error payload, string taskId)
+isolated function decodePushConfigRequest(json|error payload, string? taskId = ())
         returns TaskPushNotificationConfig|Error {
     if payload is error {
         return invalidRequest(string `request body is not valid JSON: ${payload.message()}`);
@@ -172,10 +174,30 @@ isolated function decodePushConfigRequest(json|error payload, string taskId)
     if asMap is error {
         return invalidRequest("request body is not a JSON object");
     }
-    asMap["taskId"] = taskId;
+    // HTTP+JSON names the task in the path; JSON-RPC carries it in the params themselves.
+    if taskId is string {
+        asMap["taskId"] = taskId;
+    }
     TaskPushNotificationConfig|error request = asMap.cloneWithType(TaskPushNotificationConfig);
     if request is error {
         return invalidRequest(string `request body did not match TaskPushNotificationConfig: ${request.message()}`);
     }
     return request;
+}
+
+# Checks the values of a `ListTasksRequest` that its type cannot, so a filter is
+# answered the same way over every binding: a `statusTimestampAfter` that is not
+# an RFC 3339 timestamp is the caller's mistake, not "no task matches".
+#
+# + request - The decoded request
+# + return - An `invalidParams` error, or `()`
+isolated function validateListTasksRequest(ListTasksRequest request) returns Error? {
+    string? after = request?.statusTimestampAfter;
+    if after is string {
+        time:Utc|error parsed = time:utcFromString(after);
+        if parsed is error {
+            return invalidParams(string `statusTimestampAfter "${after}" is not a valid RFC 3339 timestamp`,
+                    "statusTimestampAfter");
+        }
+    }
 }

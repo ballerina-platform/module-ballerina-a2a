@@ -66,11 +66,11 @@ function testInterfaceUrlUsesTheSchemeItIsGiven() {
 
 @test:Config {}
 function testPublicUrlIsNormalisedAndValidated() returns error? {
-    test:assertEquals(check normalisePublicUrl("https://agents.example.com/travel/"), "https://agents.example.com/travel");
-    test:assertEquals(check normalisePublicUrl("http://localhost:9090"), "http://localhost:9090");
+    test:assertEquals(check normalisePublicUrl("RestListenerConfiguration", "https://agents.example.com/travel/"), "https://agents.example.com/travel");
+    test:assertEquals(check normalisePublicUrl("RestListenerConfiguration", "http://localhost:9090"), "http://localhost:9090");
     foreach string bad in ["ftp://agents.example.com", "agents.example.com", "https://", "https:///path",
             "https://agents.example.com/a?x=1", "https://agents.example.com/a#frag", ""] {
-        string|Error r = normalisePublicUrl(bad);
+        string|Error r = normalisePublicUrl("RestListenerConfiguration", bad);
         test:assertTrue(r is InternalError, string `"${bad}" must be refused`);
     }
 }

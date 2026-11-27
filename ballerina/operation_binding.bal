@@ -53,6 +53,58 @@ final readonly & map<ResourceRoute> OPERATION_ROUTES = {
     "handleGetAgentCard": {accessor: "get", path: "agentCard"}
 };
 
+# The remote function each operation is served at when the service is attached
+# to a listener whose binding addresses operations by method name (JSON-RPC).
+final readonly & map<string> OPERATION_REMOTE_NAMES = {
+    "handleSendMessage": "sendMessage",
+    "handleSendStreamingMessage": "sendStreamingMessage",
+    "handleSubscribeToTask": "subscribeToTask",
+    "handleGetTask": "getTask",
+    "handleListTasks": "listTasks",
+    "handleCancelTask": "cancelTask",
+    "handleCreateTaskPushNotificationConfig": "createTaskPushNotificationConfig",
+    "handleGetTaskPushNotificationConfig": "getTaskPushNotificationConfig",
+    "handleListTaskPushNotificationConfigs": "listTaskPushNotificationConfigs",
+    "handleDeleteTaskPushNotificationConfig": "deleteTaskPushNotificationConfig",
+    "handleGetExtendedAgentCard": "getExtendedAgentCard",
+    "handleGetAgentCard": "getAgentCard"
+};
+
+# What a remote function that serves an A2A method takes and returns.
+type ExpectedSignature record {|
+    # The request record it takes, or `()` when it takes none
+    typedesc<anydata>? request;
+    # What it may return: a type its declared return type must be a subtype of
+    typedesc<any|error> result;
+|};
+
+type SendResult Task|Message|Error;
+type StreamResult stream<StreamResponse, Error?>|Error;
+type TaskResult Task|Error;
+type ListResult ListTasksResponse|Error;
+type PushConfigResult TaskPushNotificationConfig|Error;
+type PushConfigsResult ListTaskPushNotificationConfigsResponse|Error;
+type DeleteResult Error?;
+type CardResult AgentCard|Error;
+
+# The request and the result of every remote function a service may define.
+#
+# + return - The signatures, by remote function name
+isolated function expectedRemoteSignatures() returns map<ExpectedSignature> => {
+    "sendMessage": {request: SendMessageRequest, result: SendResult},
+    "sendStreamingMessage": {request: SendMessageRequest, result: StreamResult},
+    "subscribeToTask": {request: SubscribeToTaskRequest, result: StreamResult},
+    "getTask": {request: GetTaskRequest, result: TaskResult},
+    "listTasks": {request: ListTasksRequest, result: ListResult},
+    "cancelTask": {request: CancelTaskRequest, result: TaskResult},
+    "createTaskPushNotificationConfig": {request: TaskPushNotificationConfig, result: PushConfigResult},
+    "getTaskPushNotificationConfig": {request: GetTaskPushNotificationConfigRequest, result: PushConfigResult},
+    "listTaskPushNotificationConfigs": {request: ListTaskPushNotificationConfigsRequest, result: PushConfigsResult},
+    "deleteTaskPushNotificationConfig": {request: DeleteTaskPushNotificationConfigRequest, result: DeleteResult},
+    "getExtendedAgentCard": {request: GetExtendedAgentCardRequest, result: CardResult},
+    "getAgentCard": {request: (), result: CardResult}
+};
+
 # The error for an operation the service does not define.
 #
 # + operation - The operation's name
@@ -70,27 +122,44 @@ isolated function extendedAgentCardUnsupportedError() returns UnsupportedOperati
     return error UnsupportedOperationError(msg, message = msg, code = -32004);
 }
 
-# An attached service, with every A2A operation callable: the ones it defines
-# through its resources, and an error answer for the rest.
+# An attached service, with every A2A operation callable: the ones it defines,
+# and an error answer for the rest.
+#
+# A service defines an operation as a `resource` function (HTTP+JSON, where an
+# operation is a verb and a path) or as a `remote` function (JSON-RPC, where it
+# is a method name); the binding is built for one or the other.
 isolated class OperationBinding {
     private final Service agentService;
+    private final boolean byMethodName;
     // The names of the operations the service defines, in table order
     final readonly & string[] defined;
+    // What is wrong with the service's remote functions: one that is not an A2A method, or one that takes or returns
+    // the wrong types. Always empty for resources, which are not checked this way.
+    final readonly & string[] problems;
 
     # + agentService - The service being attached
-    isolated function init(Service agentService) {
+    # + byMethodName - Whether the operations are `remote` functions rather than resources
+    isolated function init(Service agentService, boolean byMethodName = false) {
         self.agentService = agentService;
-        string[] declared = describeResources(agentService).'map(entry => entry.endsWith(" +context")
-            ? entry.substring(0, entry.length() - " +context".length())
-            : entry);
+        self.byMethodName = byMethodName;
+        string[] declared = (byMethodName ? describeRemoteFunctions(agentService) : describeResources(agentService))
+            .'map(entry => entry.endsWith(" +context")
+                ? entry.substring(0, entry.length() - " +context".length())
+                : entry);
         string[] names = [];
-        foreach [string, ResourceRoute] [operation, route] in OPERATION_ROUTES.entries() {
-            if declared.indexOf(route.accessor + " " + route.path) is int {
+        foreach string operation in OPERATION_ROUTES.keys() {
+            if declared.indexOf(declarationFor(byMethodName, operation)) is int {
                 names.push(operation);
             }
         }
         self.defined = names.cloneReadOnly();
+        self.problems = byMethodName ? remoteFunctionProblems(agentService, declared).cloneReadOnly() : [];
     }
+
+    # + operation - An operation's internal name such as `handleGetTask`
+    # + return - How the service declares it: `get tasks/*` for a resource,
+    #            `getTask` for a remote function
+    isolated function declarationOf(string operation) returns string => declarationFor(self.byMethodName, operation);
 
     # + operationName - An operation's internal name such as `handleGetTask`
     # + return - Whether the service defines it
@@ -177,9 +246,13 @@ isolated class OperationBinding {
         if !self.isDefined(operation) {
             return self.undefinedError(operation);
         }
-        ResourceRoute route = OPERATION_ROUTES.get(operation);
-        anydata|stream<StreamResponse, Error?>|error result =
-            invokeResource(self.agentService, route.accessor, route.path, pathParams, context, request);
+        anydata|stream<StreamResponse, Error?>|error result;
+        if self.byMethodName {
+            result = invokeRemoteFunction(self.agentService, OPERATION_REMOTE_NAMES.get(operation), context, request);
+        } else {
+            ResourceRoute route = OPERATION_ROUTES.get(operation);
+            result = invokeResource(self.agentService, route.accessor, route.path, pathParams, context, request);
+        }
         if result is Error {
             return result;
         }
@@ -205,4 +278,80 @@ isolated class OperationBinding {
         }
         return operationUndefinedError(operation);
     }
+}
+
+# How a service declares an operation.
+#
+# + byMethodName - Whether the binding addresses operations by method name
+# + operation - The operation's internal name
+# + return - `get tasks/*` for a resource, `getTask` for a remote function
+isolated function declarationFor(boolean byMethodName, string operation) returns string {
+    if byMethodName {
+        return OPERATION_REMOTE_NAMES.get(operation);
+    }
+    ResourceRoute route = OPERATION_ROUTES.get(operation);
+    return string `${route.accessor} ${route.path}`;
+}
+
+# What is wrong with the remote functions of a service attached to a listener that addresses operations by method
+# name. Every remote function on an `a2a:Service` exists for the listener, so one that is not an A2A method is almost
+# certainly a typo, and is refused with the name it was probably meant to have. One that is an A2A method but takes or
+# returns the wrong types is refused here too, and not by a panic on its first request.
+#
+# + agentService - The service being attached
+# + declared - The remote functions it defines, without the `+context` mark
+# + return - One description per problem
+isolated function remoteFunctionProblems(Service agentService, string[] declared) returns string[] {
+    string[] known = OPERATION_REMOTE_NAMES.toArray();
+    string[] problems = [];
+    foreach string name in declared {
+        if known.indexOf(name) is () {
+            string? closest = closestName(name, known);
+            problems.push(string `"${name}" is not an A2A method` + (closest is string
+                ? string `; did you mean "${closest}"?` : string `; the methods are ${string:'join(", ", ...known)}`));
+        }
+    }
+    foreach string problem in checkRemoteFunctionSignatures(agentService, expectedRemoteSignatures()) {
+        problems.push(problem);
+    }
+    return problems;
+}
+
+# The known name that `name` is probably a typo of.
+#
+# + name - A name that is not a known one
+# + known - The known names
+# + return - The closest known name when it is within a few edits, otherwise `()`
+isolated function closestName(string name, string[] known) returns string? {
+    string? closest = ();
+    int best = int:max(2, name.length() / 4) + 1;
+    foreach string candidate in known {
+        int distance = editDistance(name, candidate);
+        if distance < best {
+            best = distance;
+            closest = candidate;
+        }
+    }
+    return closest;
+}
+
+# The number of single-character edits between two strings (Levenshtein).
+#
+# + a - One string
+# + b - The other
+# + return - The distance
+isolated function editDistance(string a, string b) returns int {
+    int[] previous = [];
+    foreach int j in 0 ... b.length() {
+        previous.push(j);
+    }
+    foreach int i in 1 ... a.length() {
+        int[] current = [i];
+        foreach int j in 1 ... b.length() {
+            int substitution = previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            current.push(int:min(int:min(previous[j] + 1, current[j - 1] + 1), substitution));
+        }
+        previous = current;
+    }
+    return previous[b.length()];
 }
