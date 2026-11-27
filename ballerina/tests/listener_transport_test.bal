@@ -52,23 +52,21 @@ function jwksAuth() returns http:ListenerAuthConfig[] => [{jwtValidatorConfig: {
 function testTwoListenersOnOneHttpListenerShareOneAuthenticator() returns error? {
     int before = jwksFetchCount();
     http:Listener shared = check new (19368);
-    RestListener rest = check new (shared, auth = jwksAuth());
-    JsonRpcListener rpc = check new (shared);
+    _ = check new RestListener(shared, auth = jwksAuth());
+    _ = check new JsonRpcListener(shared);
     int afterShared = jwksFetchCount();
     test:assertEquals(afterShared - before, 1, "the identity provider is asked once for both bindings");
 
     // Two listeners that do not share an `http:Listener` have nothing to share, and each asks for itself.
-    RestListener alone = check new (19369, auth = jwksAuth());
-    JsonRpcListener other = check new (19370, auth = jwksAuth());
+    _ = check new RestListener(19369, auth = jwksAuth());
+    _ = check new JsonRpcListener(19370, auth = jwksAuth());
     test:assertEquals(jwksFetchCount() - afterShared, 2);
-    // The listeners are built and not started; nothing is bound beyond what the HTTP listeners hold.
-    test:assertTrue(rest is RestListener && rpc is JsonRpcListener && alone is RestListener && other is JsonRpcListener);
 }
 
 @test:Config {}
 function testALaterListenerWithItsOwnDifferentAuthDoesNotShareTheAuthenticator() returns error? {
     http:Listener shared = check new (19371);
-    RestListener first = check new (shared, auth = jwksAuth());
+    _ = check new RestListener(shared, auth = jwksAuth());
     int afterFirst = jwksFetchCount();
     // The same issuer and audience with a different key set URL is a different `auth`.
     http:ListenerAuthConfig[] different = [{jwtValidatorConfig: {
@@ -77,9 +75,8 @@ function testALaterListenerWithItsOwnDifferentAuthDoesNotShareTheAuthenticator()
         signatureConfig: {jwksConfig: {url: string `http://localhost:${JWKS_STUB_PORT}/jwks?other=1`,
             cacheConfig: {capacity: 10}}}
     }}];
-    JsonRpcListener second = check new (shared, auth = different);
-    test:assertTrue(jwksFetchCount() >= afterFirst, "it was built from its own `auth`");
-    test:assertTrue(first is RestListener && second is JsonRpcListener);
+    _ = check new JsonRpcListener(shared, auth = different);
+    test:assertEquals(jwksFetchCount() - afterFirst, 1, "it was built from its own `auth`");
 }
 
 // A detach that ran between an attach's card entry and its mount used to leave the path mounted with no card and no

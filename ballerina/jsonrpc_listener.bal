@@ -115,6 +115,17 @@ public isolated class JsonRpcListener {
 }
 
 # Builds the dispatcher that serves a service over JSON-RPC.
+#
+# + served - The agent card the service serves
+# + binding - The operations the service implements
+# + cards - The cards served by the listener
+# + authenticator - Authenticates requests, or `()` when the listener is open
+# + interfaceScheme - The scheme the card advertises for this interface
+# + publicUrl - The public base URL the card advertises, or `()` to derive it from the request
+# + streamTiming - How long a stream stays open and how often it is kept alive
+# + mountPath - The path the dispatcher is served at
+# + validateInputModes - Whether an incoming message is checked against the card's accepted input modes
+# + return - The dispatcher
 isolated function newJsonRpcService(AgentCard served, OperationBinding binding, ServedCards cards,
         ListenerAuthenticator? authenticator, string interfaceScheme, string? publicUrl, StreamTiming streamTiming,
         string mountPath, boolean validateInputModes) returns http:Service =>
