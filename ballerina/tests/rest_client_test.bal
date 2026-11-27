@@ -349,7 +349,7 @@ function testRestClientStreams() returns error? {
 @test:Config {}
 function testRestClientSatisfiesClientMethods() returns error? {
     setNextRestResponse({task: defaultTaskJson()});
-    Client c = check new RestClient(getServerBaseUrl());
+    ClientOperations c = check new RestClient(getServerBaseUrl());
     Task|Message result = check c->sendMessage({message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hi"}]}});
     test:assertTrue(result is Task, "a RestClient must be usable through the Client shape");
 }

@@ -219,7 +219,7 @@ isolated class CountingReconnectable {
                 return error InternalError("resubscribe cap reached");
             }
         }
-        return responseStream([error("dropped again")]);
+        return responseStream([error StreamDroppedError("dropped again")]);
     }
 
     isolated function callCount() returns int {
@@ -245,7 +245,7 @@ isolated class CountingReconnectable {
 @test:Config {}
 function testReconnectBudgetIsConsumedOncePerAttemptAndSharedAcrossTheChain() returns error? {
     CountingReconnectable owner = new (3);
-    stream<StreamResponse, Error?> initial = responseStream([error InternalError("first drop")]);
+    stream<StreamResponse, Error?> initial = responseStream([error StreamDroppedError("first drop")]);
     stream<StreamResponse, Error?> s =
         new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
 
@@ -397,7 +397,7 @@ isolated class FlakyReconnectable {
 @test:Config {}
 function testReconnectSpendsTheWholeBudgetAcrossFailedReopens() returns error? {
     FlakyReconnectable owner = new (1);
-    stream<StreamResponse, Error?> initial = responseStream([error InternalError("dropped")]);
+    stream<StreamResponse, Error?> initial = responseStream([error StreamDroppedError("dropped")]);
     stream<StreamResponse, Error?> s =
         new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
 
@@ -406,4 +406,47 @@ function testReconnectSpendsTheWholeBudgetAcrossFailedReopens() returns error? {
             "the second reopen should have succeeded and delivered its event");
     test:assertEquals(owner.callCount(), 2,
             "maxAttempts = 2 means two reopen attempts, even when the first one fails");
+}
+
+// An error the agent sent as a frame of the stream ends it. Reopening would let a successful reopen hide that error
+// from the caller, so only a failed connection is reopened.
+@test:Config {}
+function testReconnectDoesNotReopenAStreamTheAgentEndedWithAnError() returns error? {
+    CountingReconnectable owner = new (5);
+    stream<StreamResponse, Error?> initial = responseStream([error TaskNotFoundError("gone")]);
+    stream<StreamResponse, Error?> s = new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
+
+    record {| StreamResponse value; |}|error? result = s.next();
+
+    test:assertTrue(result is TaskNotFoundError, "the agent's own error must reach the caller");
+    test:assertEquals(owner.callCount(), 0, "an error frame is not a dropped connection, so nothing is reopened");
+    test:assertTrue(s.next() is (), "the stream is over");
+}
+
+@test:Config {}
+function testReconnectDoesNotHideAnAgentErrorBehindASuccessfulReopen() returns error? {
+    FlakyReconnectable owner = new (0);
+    stream<StreamResponse, Error?> initial = responseStream([error InvalidAgentResponseError("the agent broke")]);
+    stream<StreamResponse, Error?> s = new (new ReconnectingStreamGenerator(initial, owner, "task-1", 2));
+
+    record {| StreamResponse value; |}|error? result = s.next();
+
+    test:assertTrue(result is InvalidAgentResponseError, "a reopen that would succeed must not replace the error");
+    test:assertEquals(owner.callCount(), 0);
+}
+
+// The HTTP layer reports a stream that failed under it as an `error` event with no JSON body; a body that is an A2A
+// error is the agent's.
+@test:Config {}
+function testAnErrorEventWithNoJsonBodyIsADroppedStreamAndOneWithAnA2aErrorIsTheAgents() returns error? {
+    A2aStreamGenerator hollow = newGenerator([{'event: "error", data: "stream failed"}]);
+    test:assertTrue(hollow.next() is StreamDroppedError);
+
+    A2aStreamGenerator typed = newGenerator([
+        {'event: "error", data: {"error": {"code": 404, "status": "NOT_FOUND", "message": "gone",
+            "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NOT_FOUND",
+                "domain": "a2a-protocol.org"}]}}.toJsonString()}
+    ]);
+    record {| StreamResponse value; |}|Error? result = typed.next();
+    test:assertTrue(result is Error && result !is StreamDroppedError, "the agent's error is not a dropped stream");
 }

@@ -173,12 +173,12 @@ function testClientFromCardDoesNotRefetchIt() returns error? {
 }
 
 // Confirms RestClient satisfies the shared internal Client contract — not a
-// caller-facing capability (Client isn't public; see client.bal).
+// caller-facing capability (ClientOperations is internal; see client.bal).
 // When JSON-RPC and gRPC land, their clients must satisfy it too.
 @test:Config {}
 function testRestClientSatisfiesClientContract() returns error? {
     setNextRestResponse(defaultTaskJson());
-    Client c = check new RestClient(getServerBaseUrl());
+    ClientOperations c = check new RestClient(getServerBaseUrl());
     // Holding the concrete client as the contract type is the assertion: it
     // only compiles because RestClient satisfies the shared shape.
     Task _ = check c->getTask({id: "task-1"});
