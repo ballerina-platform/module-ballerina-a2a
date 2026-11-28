@@ -236,7 +236,7 @@ function testServerStillRejectsADifferentMinorVersion() returns error? {
 @test:Config {}
 function testServerRoundTripFileBytesReachTheAgentAsBytes() returns error? {
     // Through the typed client, which base64-encodes on the way out.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task viaClient = <Task>check c->sendMessage({
         message: {messageId: "raw-1", role: ROLE_USER, parts: [{raw: "tck".toBytes(), mediaType: "text/plain"}]}
     });
@@ -308,7 +308,7 @@ function testServerRejectsMalformedRequestBodiesWith400() returns error? {
 
 @test:Config {}
 function testServerRoundTripSendMessageReturnsTask() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message reply = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
     });
@@ -322,7 +322,7 @@ function testServerRoundTripSendMessageReturnsTask() returns error? {
 
 @test:Config {}
 function testServerRoundTripDirectMessageReply() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message reply = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ping"}]}
     });
@@ -335,7 +335,7 @@ function testServerRoundTripContinueUnknownTaskIsTyped() returns error? {
     // Per specification 3.4.2, a client cannot name a task into existence --
     // message.taskId naming an id the server has never seen is
     // TaskNotFoundError, not "create a new task with this id".
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message|Error result = c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, taskId: "does-not-exist", parts: [{text: "hello"}]}
     });
@@ -349,7 +349,7 @@ function testServerRoundTripContinueTerminalTaskIsRejected() returns error? {
     // test's own continuation attempt reaches the server, the task it
     // names is already TASK_STATE_COMPLETED -- specification 3.1.1
     // forbids sending it a further message.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
     });
@@ -371,7 +371,7 @@ function testServerRoundTripContinueMismatchedContextIdIsRejected() returns erro
     // Per specification 3.4.3, a message whose contextId disagrees with
     // the task it names by taskId must be rejected outright, not silently
     // reconciled either way.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]}
     });
@@ -391,7 +391,7 @@ function testServerRoundTripContinueMismatchedContextIdIsRejected() returns erro
 
 @test:Config {}
 function testServerRoundTripReturnImmediatelyHandsBackBeforeCompletion() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message reply = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "hello"}]},
         configuration: {returnImmediately: true}
@@ -417,7 +417,7 @@ function testServerRoundTripReturnImmediatelyCompletesDirectMessageReply() retur
     // immediate-return snapshot, a direct Message reply can no longer
     // make the task disappear as if it never existed -- it completes the
     // task with the Message as its final status.message instead.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message reply = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ping"}]},
         configuration: {returnImmediately: true}
@@ -439,7 +439,7 @@ function testServerRoundTripReturnImmediatelyCompletesDirectMessageReply() retur
 # + c - The client to poll through
 # + taskId - The task to poll
 # + return - The task, once terminal
-isolated function pollUntilTerminal(Client c, string taskId) returns Task|error {
+isolated function pollUntilTerminal(ClientOperations c, string taskId) returns Task|error {
     foreach int _ in 0 ..< 100 {
         Task task = check c->getTask({id: taskId});
         if isTerminalState(task.status.state) {
@@ -455,7 +455,7 @@ function testServerRoundTripContinuePausedTaskSucceeds() returns error? {
     // The happy path: "ask" pauses at TASK_STATE_INPUT_REQUIRED with no
     // driver left running (execute already returned), so continuing it
     // is a clean, non-racing acquire.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task paused = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ask"}]}
     });
@@ -488,7 +488,7 @@ function testServerRoundTripContinuePausedTaskSucceeds() returns error? {
 
 @test:Config {}
 function testServerRoundTripAgentErrorFailsTask() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task submitted = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "boom"}]},
         configuration: {returnImmediately: true}
@@ -503,7 +503,7 @@ function testServerRoundTripAgentErrorFailsTask() returns error? {
 
 @test:Config {}
 function testServerRoundTripAgentPanicFailsTask() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task submitted = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "panic"}]},
         configuration: {returnImmediately: true}
@@ -515,7 +515,7 @@ function testServerRoundTripAgentPanicFailsTask() returns error? {
 
 @test:Config {}
 function testServerRoundTripGetTask() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "remember me"}]}
     });
@@ -526,7 +526,7 @@ function testServerRoundTripGetTask() returns error? {
 
 @test:Config {}
 function testServerRoundTripGetUnknownTaskIsTyped() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Error result = c->getTask({id: "does-not-exist"});
     test:assertTrue(result is TaskNotFoundError,
             "an unknown task must round-trip as a2a:TaskNotFoundError through the google.rpc.Status body");
@@ -534,7 +534,7 @@ function testServerRoundTripGetUnknownTaskIsTyped() returns error? {
 
 @test:Config {}
 function testServerRoundTripCancelTask() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     // The echo agent completes synchronously, so the task is already terminal;
     // canceling it must be refused as TaskNotCancelableError.
     Task created = <Task>check c->sendMessage({
@@ -573,7 +573,7 @@ function testServerRoundTripErrorStatusCodesMatchSpecTable() returns error? {
 
 @test:Config {}
 function testServerRoundTripSendStreamingMessage() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     stream<StreamResponse, error?> events = check c->sendStreamingMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "stream me"}]}
     });
@@ -604,7 +604,7 @@ function testServerRoundTripSendStreamingMessage() returns error? {
 
 @test:Config {}
 function testServerRoundTripSendStreamingMessageDirectReply() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     stream<StreamResponse, error?> events = check c->sendStreamingMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ping"}]}
     });
@@ -625,7 +625,7 @@ function testServerRoundTripSendStreamingMessageDirectReply() returns error? {
 // getTask (the same guarantee this extends to send/stream).
 @test:Config {}
 function testServerRoundTripSendMessageHistoryLengthZeroOmitsHistory() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message result = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "echo hi"}]},
         configuration: {historyLength: 0}
@@ -637,7 +637,7 @@ function testServerRoundTripSendMessageHistoryLengthZeroOmitsHistory() returns e
 
 @test:Config {}
 function testServerRoundTripSendMessageReturnImmediatelyHistoryLengthZero() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     // returnImmediately hands back the pre-created snapshot through a
     // separate return statement from the driven-synchronously case above --
     // a distinct code path, so it gets its own test rather than assuming
@@ -652,7 +652,7 @@ function testServerRoundTripSendMessageReturnImmediatelyHistoryLengthZero() retu
 
 @test:Config {}
 function testServerRoundTripSendStreamingMessageHistoryLengthZeroOmitsHistoryFromSeed() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     stream<StreamResponse, error?> events = check c->sendStreamingMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "stream me"}]},
         configuration: {historyLength: 0}
@@ -681,7 +681,7 @@ function testServerRoundTripSubscribeToTask() returns error? {
     // sendMessage call, so by the time this test's own subscribeToTask
     // request reaches the server, the task it names is already
     // TASK_STATE_COMPLETED -- exactly the case this rejects.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "subscribe me"}]}
     });
@@ -694,7 +694,7 @@ function testServerRoundTripSubscribeToTask() returns error? {
 
 @test:Config {}
 function testServerRoundTripSubscribeToUnknownTaskIsTyped() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     stream<StreamResponse, error?>|Error result = c->subscribeToTask({id: "does-not-exist"});
     test:assertTrue(result is TaskNotFoundError,
             "an unknown task must round-trip as a2a:TaskNotFoundError through the google.rpc.Status body");
@@ -708,7 +708,7 @@ function testServerRoundTripMultiSubscriberFanOut() returns error? {
     // luck. EchoAgent's "paced:<key>" trigger blocks at each of its three
     // checkpoints on the Gate registered under <key>, so this test decides
     // exactly when each event broadcasts.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Gate gate = new;
     string key = "fanout-1";
     registerGate(key, gate);
@@ -771,7 +771,7 @@ function testServerRoundTripConcurrentMessageToRunningTaskLeavesNoTrace() return
     // Deterministic: the first message's "paced:<key>" trigger blocks it at
     // WORKING (checkpoint 1) on the gate below, so the rejection is raced
     // against a driver genuinely still running, not a runtime:sleep guess.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Gate gate = new;
     string key = "concurrent-1";
     registerGate(key, gate);
@@ -989,7 +989,7 @@ function testServerRoundTripMessageReplyOnContinuedTaskDoesNotCloseOtherSubscrib
     // subscriber's stream for that unrelated event would violate
     // specification 3.5.2 ("closing one stream MUST NOT affect other
     // active streams for the same task").
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task paused = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "ask"}]}
     });
@@ -1055,7 +1055,7 @@ isolated function expectStreamValue(stream<StreamResponse, error?> events) retur
 
 @test:Config {}
 function testServerRoundTripListTasks() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task|Message _ = check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "one"}]}
     });
@@ -1078,7 +1078,7 @@ function testServerRoundTripListTasks() returns error? {
 // task the shared echoListener accumulates across the rest of this suite.
 @test:Config {}
 function testServerRoundTripListTasksDefaultsPageSizeTo50() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     string contextId = uuid:createType4AsString();
     foreach int i in 0 ..< 55 {
         Task|Message _ = check c->sendMessage({
@@ -1097,7 +1097,7 @@ function testServerRoundTripListTasksDefaultsPageSizeTo50() returns error? {
 // validation example makes it ("Must be between 1 and 100 inclusive").
 @test:Config {}
 function testServerRoundTripListTasksRejectsPageSizeOutOfRange() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     foreach int badPageSize in [0, -3, 101, 100000] {
         ListTasksResponse|Error result = c->listTasks({pageSize: badPageSize});
         test:assertTrue(result is InternalError, string `pageSize ${badPageSize} must be refused, not honoured`);
@@ -1111,7 +1111,7 @@ function testServerRoundTripListTasksRejectsPageSizeOutOfRange() returns error? 
 // raises InvalidParams "Invalid page token" for exactly this.
 @test:Config {}
 function testServerRoundTripListTasksRejectsBogusPageToken() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     ListTasksResponse|Error result = c->listTasks({pageToken: "not-a-real-cursor-" + uuid:createType4AsString()});
     test:assertTrue(result is InternalError, "a page token naming no known task must be refused");
     test:assertEquals((<InternalError>result).detail()?.code, -32602);
@@ -1145,7 +1145,7 @@ function testServerRoundTripListTasksRejectsInvalidQueryValues() returns error? 
 // be dropped when they didn't parse, answering as if they were never sent.
 @test:Config {}
 function testServerRoundTripGetTaskAndPushConfigListRejectInvalidQueryValues() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "query me"}]}
     });
@@ -1196,7 +1196,7 @@ function testServerRoundTripValidationErrorsCarryBadRequestDetails() returns err
     test:assertTrue(badRequestFieldOf(check errorDetailsOf(missing)) is error);
 
     // The client still decodes the same error type, and sees the field too.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     ListTasksResponse|Error result = c->listTasks({pageSize: 500});
     test:assertTrue(result is InternalError);
     InternalError rejected = <InternalError>result;
@@ -1224,7 +1224,7 @@ isolated function badRequestFieldOf(json[] details) returns string|error {
 // precision SHOULD be used (a whole second MAY omit the fraction).
 @test:Config {}
 function testServerRoundTripStatusTimestampsUseMillisecondPrecision() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "what time is it"}]}
     });
@@ -1243,7 +1243,7 @@ function testServerRoundTripStatusTimestampsUseMillisecondPrecision() returns er
 // omitted, not sent as an empty array -- on getTask and listTasks alike.
 @test:Config {}
 function testServerRoundTripHistoryLengthZeroOmitsTheHistoryField() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "remember me"}]}
     });
@@ -1271,7 +1271,7 @@ function testServerRoundTripGetExtendedAgentCardWhenNotConfigured() returns erro
     // client-side rather than sending a request the server would also
     // refuse -- specification section 3.3.4's MUST-fail is honoured on both
     // sides of the wire, just at different points.
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     AgentCard|Error result = c->getExtendedAgentCard();
     test:assertTrue(result is UnsupportedOperationError,
             "a card declaring no extended-card support must refuse client-side, not send a doomed request");
@@ -1325,13 +1325,13 @@ function testExtendedCardNotDefinedByTheServiceIsUnsupported() {
 // capabilities.pushNotifications is true since delivery landed, so the
 // library's own Client no longer self-gates these four operations -- unlike
 // the extended-card self-gate above, which is exercised on purpose. Using
-// the typed Client here, rather than a raw http:Client, is the stronger
+// the typed ClientOperations here, rather than a raw http:Client, is the stronger
 // assertion: it proves a real caller of this library, not just a caller
 // willing to speak the wire directly, can drive the whole CRUD cycle.
 
 @test:Config {}
 function testServerRoundTripPushNotificationConfigCrud() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m1", role: ROLE_USER, parts: [{text: "needs a webhook"}]}
     });
@@ -1372,7 +1372,7 @@ function testServerRoundTripPushNotificationConfigCrud() returns error? {
 
 @test:Config {}
 function testServerRoundTripCreatePushNotificationConfigForUnknownTaskIsTyped() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     TaskPushNotificationConfig|Error result =
         c->createTaskPushNotificationConfig({taskId: "does-not-exist", url: "https://example.com/webhook"});
     test:assertTrue(result is TaskNotFoundError,
@@ -1384,7 +1384,7 @@ function testServerRoundTripCreatePushNotificationConfigForUnknownTaskIsTyped() 
 // (or empty) id is the server's to assign.
 @test:Config {}
 function testServerRoundTripPushNotificationConfigKeepsTheCallersOwnId() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m-cfg-id", role: ROLE_USER, parts: [{text: "needs webhooks"}]}
     });
@@ -1425,7 +1425,7 @@ function testServerRoundTripPushNotificationConfigKeepsTheCallersOwnId() returns
 // again. It is a bad request (400), rejected before any task is created.
 @test:Config {}
 function testServerRoundTripPushNotificationConfigIdWithASlashIsRejected() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m-cfg-slash", role: ROLE_USER, parts: [{text: "needs a webhook"}]}
     });
@@ -1450,7 +1450,7 @@ function testServerRoundTripPushNotificationConfigIdWithASlashIsRejected() retur
 // The same registration through the send request itself.
 @test:Config {}
 function testServerRoundTripInlinePushNotificationConfigKeepsTheCallersOwnId() returns error? {
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m-inline-id", role: ROLE_USER, parts: [{text: "inline webhook"}]},
         configuration: {taskPushNotificationConfig: {url: "https://example.com/a", id: "inline-cfg"}}
@@ -1472,7 +1472,7 @@ function testServerRoundTripListPushNotificationConfigsOnATaskWithNoneIsAnEmptyP
     // NullPointerException (confirmed by a standalone repro, isolated from
     // the rest of this module, to be specifically about that one shape --
     // binding the map to a local variable first avoids it).
-    Client c = check echoClient();
+    ClientOperations c = check echoClient();
     Task created = <Task>check c->sendMessage({
         message: {messageId: "m-no-push-configs", role: ROLE_USER, parts: [{text: "no webhook here"}]}
     });

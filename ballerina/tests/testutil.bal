@@ -586,7 +586,7 @@ service / on mockListener {
         // guarded rather than `check`ed; a genuinely malformed body on a
         // POST is likewise tolerated here (recorded as {}) since body
         // well-formedness isn't this mock's concern -- it exists to let
-        // tests assert on what the Client sent, not to validate it.
+        // tests assert on what the ClientOperations sent, not to validate it.
         json|error parsedBody = req.getJsonPayload();
         json capturedBody = parsedBody is json ? parsedBody : {};
         // Same lowercasing rationale as the JSON-RPC handler above.

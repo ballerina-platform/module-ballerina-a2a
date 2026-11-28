@@ -1884,7 +1884,7 @@ isolated function cardWithExtendedSupport(boolean supported, string name = "Held
 // Sends one getTask so the mock's last-seen request is a known,
 // distinguishable one, then returns the path it recorded. The REST binding
 // names its operation in the path, so that is what identifies the request.
-isolated function primeLastRequest(Client c) returns string|error {
+isolated function primeLastRequest(ClientOperations c) returns string|error {
     setNextRestResponse({id: "t-prime", contextId: "c1", status: {state: "TASK_STATE_COMPLETED"}});
     Task _ = check c->getTask({id: "t-prime"});
     return getLastRestRequest().path;

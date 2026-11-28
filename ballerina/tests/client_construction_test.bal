@@ -107,3 +107,40 @@ function testRestClientRightSecretStillConstructs() returns error? {
             clientConfig = oauthConfig(tokenStubUrl + "/token", "right-secret"));
     test:assertEquals(card.name, "n");
 }
+
+// A card lists its interfaces in the server's order of preference, and an older interface of a binding may come
+// ahead of its 1.0 one. The client speaks 1.0, so it builds against the 1.0 entry rather than refusing the card.
+function cardListing(TransportBinding binding, string[] versions) returns AgentCard {
+    AgentInterface[] interfaces = versions.map(version => <AgentInterface>{
+        url: string `http://localhost:19399/v${version}`, protocolBinding: binding, protocolVersion: version,
+        tenant: string `tenant-${version}`
+    });
+    return {
+        name: "n", description: "d", version: "1.0.0", capabilities: {}, supportedInterfaces: interfaces,
+        skills: [], defaultInputModes: ["text"], defaultOutputModes: ["text"]
+    };
+}
+
+@test:Config {}
+function testClientsBuildAgainstTheV1InterfaceListedAfterAnOlderOne() returns error? {
+    AgentCard rpc = cardListing(JSONRPC, ["0.3", "1.0"]);
+    test:assertEquals(check primaryUrl(rpc, JSONRPC), "http://localhost:19399/v1.0");
+    test:assertEquals((check selectV1Interface(rpc, JSONRPC))?.tenant, "tenant-1.0");
+    test:assertEquals(requireV1Interface(rpc, JSONRPC), ());
+    JsonRpcClient rpcClient = check new (rpc);
+
+    AgentCard rest = cardListing(HTTP_JSON, ["0.3", "1.0"]);
+    test:assertEquals(check primaryUrl(rest, HTTP_JSON), "http://localhost:19399/v1.0");
+    test:assertEquals((check selectV1Interface(rest, HTTP_JSON))?.tenant, "tenant-1.0");
+    test:assertEquals(requireV1Interface(rest, HTTP_JSON), ());
+    RestClient restClient = check new (rest);
+    test:assertTrue(rpcClient is JsonRpcClient && restClient is RestClient);
+}
+
+@test:Config {}
+function testClientsStillRefuseACardWhoseOnlyInterfaceIsAnotherVersion() {
+    JsonRpcClient|Error rpc = new (cardListing(JSONRPC, ["0.3"]));
+    test:assertTrue(rpc is VersionNotSupportedError, "a 0.3-only JSON-RPC card must still be refused");
+    RestClient|Error rest = new (cardListing(HTTP_JSON, ["0.3", "1.1"]));
+    test:assertTrue(rest is VersionNotSupportedError, "a card with no 1.0 interface must still be refused");
+}

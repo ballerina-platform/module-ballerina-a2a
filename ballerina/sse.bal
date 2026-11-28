@@ -29,14 +29,16 @@ import ballerina/http;
 # reached.
 #
 # + resp - The HTTP response opened with `Accept: text/event-stream`
+# + jsonRpcId - The id of the JSON-RPC request the stream answers, which every event must echo; `()` for the
+#               HTTP+JSON binding, whose events are bare StreamResponse values
 # + return - A stream of decoded StreamResponse values
-isolated function readSseStream(http:Response resp)
+isolated function readSseStream(http:Response resp, string? jsonRpcId = ())
         returns stream<StreamResponse, Error?>|Error {
     stream<http:SseEvent, error?>|error sseStream = resp.getSseEventStream();
     if sseStream is error {
         return wrapTransportError(sseStream);
     }
-    A2aStreamGenerator generator = new (sseStream);
+    A2aStreamGenerator generator = new (sseStream, jsonRpcId);
     stream<StreamResponse, Error?> result = new (generator);
     return result;
 }
@@ -47,10 +49,14 @@ isolated function readSseStream(http:Response resp)
 # interrupted states (INPUT_REQUIRED, AUTH_REQUIRED) also do not close it.
 class A2aStreamGenerator {
     private stream<http:SseEvent, error?> sseStream;
+    // The id of the request, when every event is a JSON-RPC response whose `result` (or `error`) holds the payload, as
+    // the JSON-RPC binding sends them; `()` when events are the bare StreamResponse the HTTP+JSON binding sends.
+    private final string? jsonRpcId;
     private boolean closed = false;
 
-    isolated function init(stream<http:SseEvent, error?> sseStream) {
+    isolated function init(stream<http:SseEvent, error?> sseStream, string? jsonRpcId = ()) {
         self.sseStream = sseStream;
+        self.jsonRpcId = jsonRpcId;
     }
 
     # + return - The next event, `()` at end of stream, or an error
@@ -68,7 +74,7 @@ class A2aStreamGenerator {
             }
             if chunk is error {
                 self.closed = true;
-                return wrapTransportError(chunk);
+                return streamDropped(chunk);
             }
 
             string? data = chunk.value.data;
@@ -78,12 +84,20 @@ class A2aStreamGenerator {
             }
 
             // The HTTP+JSON binding signals a mid-stream error via a named
-            // "error" SSE frame, whose data is a REST error payload — not a
-            // StreamResponse at all.
+            // "error" SSE frame, whose data is a REST error payload -- not a
+            // StreamResponse at all. A frame with no JSON body is not the agent's
+            // error: it is how the HTTP layer reports a stream that failed under it,
+            // so it is a dropped connection.
             if chunk.value.'event == "error" {
                 json|error errBody = data.fromJsonString();
-                self.closed = true;
-                return toA2AErrorFromRest(200, errBody is json ? errBody : ());
+                if errBody is error {
+                    self.closed = true;
+                    return streamDropped(error(string `the stream ended with an error event: ${data}`));
+                }
+                if self.jsonRpcId is () {
+                    self.closed = true;
+                    return toA2AErrorFromRest(200, errBody);
+                }
             }
 
             StreamResponse?|Error result = self.decodeEvent(data);
@@ -118,11 +132,21 @@ class A2aStreamGenerator {
     # + return - The decoded event, `()` to skip it, or an error
     private isolated function decodeEvent(string data) returns StreamResponse?|Error {
         // HTTP+JSON events carry a bare StreamResponse, with no enclosing
-        // envelope.
-        json|error envelope = data.fromJsonString();
-        if envelope is error {
+        // envelope; JSON-RPC events carry it as the `result` of a response,
+        // or an `error` that ends the stream.
+        json|error parsed = data.fromJsonString();
+        if parsed is error {
             return invalidAgentResponse(
-                    string `SSE event payload is not valid JSON: ${envelope.message()}`);
+                    string `SSE event payload is not valid JSON: ${parsed.message()}`);
+        }
+        json envelope = parsed;
+        string? jsonRpcId = self.jsonRpcId;
+        if jsonRpcId is string {
+            json|Error unwrapped = unwrapJsonRpcEvent(parsed, jsonRpcId);
+            if unwrapped is Error {
+                return unwrapped;
+            }
+            envelope = unwrapped;
         }
         json|error rewired = decodeRawBytesFromWire(envelope);
         if rewired is error {
@@ -214,7 +238,9 @@ class ReconnectingStreamGenerator {
         record {| StreamResponse value; |}|error? raw = self.current.next();
         record {| StreamResponse value; |}|Error? result =
             raw is error ? wrapTransportError(raw) : raw;
-        if result is error && self.attemptsUsed < self.maxAttempts {
+        // Only a failed connection is worth reopening. An error the agent sent as a frame of the stream ends it, and
+        // reopening would let a successful reopen hide that error from the caller.
+        if result is StreamDroppedError && self.attemptsUsed < self.maxAttempts {
             // Spend the whole budget. A reopen that fails is an attempt, not
             // the end of them -- with maxAttempts = 2 and a first reopen that
             // errors, the caller asked for a second and should get one.

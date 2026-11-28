@@ -284,6 +284,24 @@ isolated function selectInterface(
     return error InternalError(msg, message = msg);
 }
 
+# The interface a client for one binding speaks to: the earliest entry declaring that binding whose protocol version
+# is unset or exactly 1.0, as `selectClientBinding` reads them. A card may list an older interface of the same
+# binding ahead of the 1.0 one. When no entry is speakable, the earliest entry for the binding comes back, so
+# `requireV1Interface` can say which version it declares.
+#
+# + card - The agent card to read the endpoint from
+# + preferredBinding - Which transport binding to look for
+# + return - The interface to use, or an InternalError if the card declares none for the binding
+isolated function selectV1Interface(AgentCard card, TransportBinding preferredBinding) returns AgentInterface|Error {
+    foreach AgentInterface iface in card.supportedInterfaces {
+        string? version = iface?.protocolVersion;
+        if iface.protocolBinding == preferredBinding && (version is () || version == "1.0") {
+            return iface;
+        }
+    }
+    return selectInterface(card, preferredBinding);
+}
+
 # Resolves the URL to construct a client against.
 #
 # Stripped of any trailing slash for the same reason `stripTrailingSlash`'s
@@ -299,7 +317,7 @@ isolated function selectInterface(
 # + return - The matching supportedInterfaces entry's url, or an
 #            InternalError if the card declares no such entry
 isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) returns string|Error {
-    AgentInterface iface = check selectInterface(card, preferredBinding);
+    AgentInterface iface = check selectV1Interface(card, preferredBinding);
     return stripTrailingSlash(iface.url);
 }
 
@@ -318,7 +336,7 @@ isolated function primaryUrl(AgentCard card, TransportBinding preferredBinding) 
 # + return - A VersionNotSupportedError when that interface declares any
 #            protocol version other than exactly 1.0, otherwise nil
 isolated function requireV1Interface(AgentCard card, TransportBinding preferredBinding) returns Error? {
-    AgentInterface iface = check selectInterface(card, preferredBinding);
+    AgentInterface iface = check selectV1Interface(card, preferredBinding);
     string? version = iface?.protocolVersion;
     // Accept only the exact version this client implements. Specification
     // section 3.6.2 requires processing to match Major.Minor exactly and
