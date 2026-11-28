@@ -235,6 +235,11 @@ public isolated client class JsonRpcClient {
     private isolated function httpFailure(http:Response response) returns Error {
         json|error body = response.getJsonPayload();
         if body is map<json> && body["error"] is map<json> && body.hasKey("jsonrpc") {
+            // An error envelope is read like any other response, so a malformed one is not mapped to a typed error.
+            Error? malformed = checkEnvelope(body, "JSON-RPC error response");
+            if malformed is Error {
+                return malformed;
+            }
             return jsonRpcErrorOf(<map<json>>body["error"]);
         }
         return toA2AErrorFromRest(response.statusCode, body is json ? body : (), challengesOf(response));

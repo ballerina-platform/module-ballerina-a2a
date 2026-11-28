@@ -109,6 +109,12 @@ service /rpc on jsonRpcStubListener {
             "http-rpc-error" => {
                 return stubJson(stubErrorEnvelope(id, {code: -32001, message: "gone"}), 500);
             }
+            "http-rpc-error-old-version" => {
+                return stubJson({jsonrpc: "1.0", id, 'error: {code: -32001, message: "gone"}}, 500);
+            }
+            "http-rpc-error-and-result" => {
+                return stubJson({jsonrpc: "2.0", id, result: {}, 'error: {code: -32001, message: "gone"}}, 500);
+            }
             "server-error" => {
                 return stubJson({"oops": true}, 500);
             }
@@ -432,6 +438,15 @@ function testReadJsonRpcResponseHandlesEachShape() {
 function testJsonRpcClientReadsAnErrorEnvelopeOnAnHttpFailure() returns error? {
     Task|Error|error result = stubGet("http-rpc-error");
     test:assertTrue(result is TaskNotFoundError, "an error envelope wins over the status that carried it");
+}
+
+// An error envelope carried by an HTTP failure must be a well-formed response too, or it says nothing about the task.
+@test:Config {}
+function testJsonRpcClientRejectsAMalformedErrorEnvelopeOnAnHttpFailure() returns error? {
+    Task|Error|error oldVersion = stubGet("http-rpc-error-old-version");
+    test:assertTrue(oldVersion is InvalidAgentResponseError, "a 1.0 envelope is not a JSON-RPC 2.0 response");
+    Task|Error|error both = stubGet("http-rpc-error-and-result");
+    test:assertTrue(both is InvalidAgentResponseError, "an envelope with a result and an error is malformed");
 }
 
 @test:Config {}
