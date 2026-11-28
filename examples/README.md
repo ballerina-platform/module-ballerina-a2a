@@ -9,7 +9,7 @@ this module ships the HTTP+JSON binding at protocol v1.0, both sides.
 
 Discovers a remote agent's Agent Card, connects, sends a message, and
 handles both reply shapes (`a2a:Task` or a direct `a2a:Message`). Point it
-at any A2A v1.0 agent that serves JSON-RPC or HTTP+JSON; defaults to the official
+at any A2A HTTP+JSON v1.0 agent; defaults to the official
 [`dice_agent_rest`](https://github.com/a2aproject/a2a-samples/tree/main/samples/python/agents/dice_agent_rest)
 sample from [`a2aproject/a2a-samples`](https://github.com/a2aproject/a2a-samples).
 See [`call-an-agent/README.md`](call-an-agent/README.md).
