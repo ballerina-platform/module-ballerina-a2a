@@ -47,6 +47,10 @@ isolated function stubJson(json payload, int statusCode = 200) returns http:Resp
 
 isolated function stubEvent(json id, json event) returns http:SseEvent => {data: stubEnvelope(id, event).toJsonString()};
 
+service / on jsonRpcStubListener {
+    resource function get \.well\-known/agent\-card\.json() returns json => stubCard().toJson();
+}
+
 service /rpc on jsonRpcStubListener {
     resource function post .(http:Request req) returns http:Response|stream<http:SseEvent, error?>|error {
         json body = check req.getJsonPayload();
@@ -59,6 +63,17 @@ service /rpc on jsonRpcStubListener {
         }
         if method == "CancelTask" {
             return stubJson(stubEnvelope(id, stubTask("cancelled", "TASK_STATE_CANCELED", metadata = params)));
+        }
+        if method == "CreateTaskPushNotificationConfig" {
+            map<json> created = {taskId: check params.taskId, id: "cfg-1", url: check params.url};
+            return stubJson(stubEnvelope(id, created));
+        }
+        if method == "GetTaskPushNotificationConfig" {
+            return stubJson(stubEnvelope(id, {taskId: check params.taskId, id: check params.id,
+                url: "https://example.com/hook"}));
+        }
+        if method == "DeleteTaskPushNotificationConfig" {
+            return stubJson(stubEnvelope(id, ()));
         }
         if method == "ListTaskPushNotificationConfigs" {
             return stubJson(stubEnvelope(id, {configs: [], nextPageToken: ""}));
@@ -148,6 +163,9 @@ isolated function stubStream(json id, string text) returns http:Response|stream<
         }
         "stream-bad-json" => {
             return [stubEvent(id, working), {data: "this is not json"}].toStream();
+        }
+        "stream-no-result" => {
+            return [stubEvent(id, working), {data: {jsonrpc: "2.0", id}.toJsonString()}].toStream();
         }
         "stream-wrong-id" => {
             return [stubEvent(id, working), stubEvent("someone-else", done)].toStream();
@@ -316,6 +334,24 @@ function testJsonRpcClientRejectsAStreamEventThatAnswersAnotherRequest() returns
     record {|StreamResponse value;|}|Error? failed = events.next();
     test:assertTrue(failed is InvalidAgentResponseError, "an event for someone else's request must not be delivered");
     test:assertTrue(events.next() is (), "nothing follows the error");
+}
+
+// A response must declare JSON-RPC 2.0 and answer with a result or an error, not both; parsing as JSON does not
+// make it one.
+@test:Config {}
+function testJsonRpcResponsesMustBeWellFormedEnvelopes() {
+    json oldVersion = {jsonrpc: "1.0", id: "1", result: {a: 1}};
+    json noVersion = {id: "1", result: {a: 1}};
+    json both = {jsonrpc: "2.0", id: "1", result: {a: 1}, 'error: {code: -32603, message: "x"}};
+    test:assertTrue(readJsonRpcResponse(oldVersion, "1") is InvalidAgentResponseError);
+    test:assertTrue(readJsonRpcResponse(noVersion, "1") is InvalidAgentResponseError);
+    test:assertTrue(readJsonRpcResponse(both, "1") is InvalidAgentResponseError);
+    test:assertTrue(unwrapJsonRpcEvent(oldVersion, "1") is InvalidAgentResponseError);
+    test:assertTrue(unwrapJsonRpcEvent(both, "1") is InvalidAgentResponseError);
+    // A well-formed result, and an error with a null id, still read.
+    test:assertEquals(readJsonRpcResponse({jsonrpc: "2.0", id: "1", result: {a: 1}}, "1"), {a: 1});
+    test:assertTrue(readJsonRpcResponse({jsonrpc: "2.0", id: (), 'error: {code: -32700, message: "parse"}}, "1")
+            is InternalError);
 }
 
 @test:Config {}

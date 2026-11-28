@@ -33,6 +33,21 @@ const JSON_RPC_ENVELOPE_VERSION = "2.0";
 # The media type of a JSON-RPC request and of a unary response to it.
 const CONTENT_TYPE_JSON_RPC = "application/json";
 
+# Checks what every JSON-RPC 2.0 response shares: the version marker, and that the response answers with a `result`
+# or an `error` but not both.
+#
+# + envelope - The response, or one event of a stream of them
+# + what - What the envelope is, for the error message
+# + return - An InvalidAgentResponseError when the envelope is not a well-formed JSON-RPC 2.0 response
+isolated function checkEnvelope(map<json> envelope, string what) returns Error? {
+    if envelope["jsonrpc"] != JSON_RPC_ENVELOPE_VERSION {
+        return invalidAgentResponse(string `${what} does not declare jsonrpc "${JSON_RPC_ENVELOPE_VERSION}"`);
+    }
+    if envelope["error"] is map<json> && envelope.hasKey("result") {
+        return invalidAgentResponse(string `${what} carries both a result and an error`);
+    }
+}
+
 # Reads the `result` of a JSON-RPC response, or maps its `error` to a typed
 # Error.
 #
@@ -43,6 +58,7 @@ isolated function readJsonRpcResponse(json payload, string id) returns json|Erro
     if payload !is map<json> {
         return invalidAgentResponse("JSON-RPC response is not an object");
     }
+    check checkEnvelope(payload, "JSON-RPC response");
     json errorMember = payload["error"];
     if errorMember is map<json> {
         return jsonRpcErrorOf(errorMember);
@@ -84,6 +100,7 @@ isolated function unwrapJsonRpcEvent(json envelope, string id) returns json|Erro
     if envelope !is map<json> {
         return invalidAgentResponse("JSON-RPC stream event is not an object");
     }
+    check checkEnvelope(envelope, "JSON-RPC stream event");
     json errorMember = envelope["error"];
     if errorMember is map<json> {
         return jsonRpcErrorOf(errorMember);
